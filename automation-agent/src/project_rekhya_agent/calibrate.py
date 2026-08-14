@@ -7,7 +7,7 @@ from xml.etree import ElementTree
 from .settings import Settings
 
 REQUIRED_KEYS = [
-    "sim_number_field", "sim_number_save", "sim_number_value", "google_phone_number_choice",
+    "sim_number_open", "sim_number_field", "sim_number_save", "sim_number_value", "google_phone_number_choice",
     "login_mobile_value", "login_password", "login_button", "login_error_message", "pmfby_insurance",
     "state_assam", "season_kharif", "scheme_pmfby", "year_2026", "submit_next", "dashboard_menu",
     "menu_displayed_name", "menu_displayed_user_id", "menu_close", "dashboard_unpaid_count", "unpaid_tile",

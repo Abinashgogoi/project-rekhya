@@ -49,6 +49,7 @@ class AppiumFlow:
 
     def set_sim_number(self, expected_user_id: str):
         self.device.start_settings()
+        self._find(self.profile.locators("sim_number_open"), timeout=20).click()
         field = self._find(self.profile.locators("sim_number_field"), timeout=20)
         field.click(); field.clear(); field.send_keys(expected_user_id)
         self._find(self.profile.locators("sim_number_save")).click()
