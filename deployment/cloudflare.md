@@ -16,3 +16,7 @@ npm run deploy:cloudflare
 ```
 
 The deployment script always uses the canonical Worker name `project-rekhya`, preserves dashboard-managed variables, and uploads `CREDENTIAL_ENCRYPTION_KEY` through Wrangler's secret mechanism rather than writing it to source or configuration.
+
+## Git-connected production builds
+
+Cloudflare Workers Builds is connected to `Abinashgogoi/project-rekhya`. Pushes containing tracked file changes on the production branch `main` must run `npm run deploy:cloudflare` from the repository root. Confirm successful releases in **Workers & Pages → project-rekhya → Deployments** before treating a Git push as live.
