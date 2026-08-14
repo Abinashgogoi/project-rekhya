@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFile, readdir } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
 
 const developmentPreviewMeta =
   /<meta(?=[^>]*\bname=["']codex-preview["'])(?=[^>]*\bcontent=["']development["'])[^>]*>/i;
@@ -30,4 +33,17 @@ test("renders development preview metadata", async () => {
     /^text\/html\b/i,
   );
   assert.match(await response.text(), developmentPreviewMeta);
+});
+
+test("bundles persistent upload feedback and exact-location restore guidance", async () => {
+  const projectRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+  const assetsDirectory = path.join(projectRoot, "dist", "client", "assets");
+  const assetNames = await readdir(assetsDirectory);
+  const dashboardAsset = assetNames.find((name) => /^dashboard-app-.*\.js$/.test(name));
+  assert.ok(dashboardAsset, "dashboard client asset should exist");
+  const source = await readFile(path.join(assetsDirectory, dashboardAsset), "utf8");
+  assert.match(source, /Upload and processing history/);
+  assert.match(source, /upload failed\. Nothing from this attempt was added/);
+  assert.match(source, /Linked records are not moved to another table or directory/);
+  assert.match(source, /Upload Portal Folder/);
 });

@@ -27,3 +27,26 @@ export type TrashWorker = {
   payment_count: number;
   verification_count: number;
 };
+
+export type ImportHistoryItem = {
+  batch_id: string;
+  file_id: string | null;
+  source_type: "master" | "portal";
+  source_label: string;
+  original_filename: string | null;
+  batch_status: "queued" | "processing" | "processed" | "processed_with_warnings" | "failed";
+  file_status: "queued" | "processing" | "processed" | "processed_with_warnings" | "failed" | null;
+  row_count: number;
+  accepted_row_count: number;
+  ignored_out_of_scope_count: number;
+  duplicate_row_count: number;
+  detected_start_date: string | null;
+  detected_end_date: string | null;
+  warning_count: number;
+  error_message: string | null;
+  uploaded_by: string;
+  created_at: string;
+  completed_at: string | null;
+  data_destination: string;
+  original_file_retained: boolean;
+};
