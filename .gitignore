@@ -48,3 +48,7 @@ next-env.d.ts
 # Python generated files
 __pycache__/
 *.py[cod]
+
+# Project Rekhya device-local automation state
+/automation-agent/selector-profile.json
+/automation-agent/Evidence/

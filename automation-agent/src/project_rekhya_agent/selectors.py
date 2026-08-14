@@ -4,6 +4,8 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+from .default_profile import default_profile_payload
+
 
 class SelectorProfileError(RuntimeError):
     pass
@@ -18,11 +20,24 @@ class Locator:
 class SelectorProfile:
     def __init__(self, path: Path):
         if not path.exists():
-            raise SelectorProfileError("SELECTOR PROFILE REQUIRED: run physical-phone calibration before verification.")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(default_profile_payload(), indent=2), encoding="utf-8")
         payload = json.loads(path.read_text(encoding="utf-8"))
         if payload.get("project") != "project-rekhya" or payload.get("schema_version") != 1:
             raise SelectorProfileError("Selector profile does not belong to Project Rekhya schema version 1.")
-        self.payload = payload
+        # Device-local calibration remains an optional override. Missing keys
+        # inherit the supported RMX3867/PMFBY defaults instead of blocking the
+        # operator with numbered questions.
+        merged = default_profile_payload()
+        merged["selectors"] = {
+            **merged["selectors"],
+            **payload.get("selectors", {}),
+        }
+        merged["regions"] = {
+            **merged.get("regions", {}),
+            **payload.get("regions", {}),
+        }
+        self.payload = merged
 
     def locators(self, key: str) -> list[Locator]:
         values = self.payload.get("selectors", {}).get(key)

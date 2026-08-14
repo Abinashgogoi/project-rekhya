@@ -8,8 +8,9 @@ This is the technical-PC component of Project Rekhya. It operates the authorized
 2. Enable USB debugging on the phone and authorize the technical PC.
 3. Insert or enable SIM 1, install the official insurance app, and confirm internet access.
 4. Copy `.env.example` to `.env` outside source control and enter the dedicated technical-officer account plus the official package/activity values.
-5. Run `python -m project_rekhya_agent.calibrate` once with the phone connected. Calibration captures the OEM-specific SIM-number screen and official-app element identifiers into `selector-profile.json` without recording passwords.
-6. Start the local controller with `project-rekhya-agent`.
+5. Start the local controller with `project-rekhya-agent`. On the supported Realme RMX3867/official PMFBY setup, Project Rekhya creates a conservative built-in selector profile automatically; the operator does not answer numbered calibration questions.
+
+`python -m project_rekhya_agent.calibrate` is retained only as an optional engineering override after an official-app or phone-OS UI change. It is not part of normal setup and never records passwords.
 
 After first setup, normal operation is: connect phone, start Appium, open the hosted Project Rekhya dashboard, run Pre-flight, then use Start/Pause/Resume/Retry Pending/Stop Safely.
 
