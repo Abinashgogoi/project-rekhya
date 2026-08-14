@@ -49,4 +49,24 @@ export type ImportHistoryItem = {
   completed_at: string | null;
   data_destination: string;
   original_file_retained: boolean;
+  file_deleted_at: string | null;
+  file_retention_until: string | null;
+  is_trashed: boolean;
+};
+
+export type SourceFileTrashItem = {
+  file_id: string;
+  batch_id: string;
+  source_type: "master" | "portal";
+  filename: string;
+  deleted_at: string;
+  retention_until: string;
+  deletion_reason: string | null;
+  deleted_by_name: string | null;
+  row_count: number;
+  accepted_row_count: number;
+  affected_record_count: number;
+  detected_start_date: string | null;
+  detected_end_date: string | null;
+  data_destination: string;
 };

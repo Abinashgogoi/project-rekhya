@@ -9,7 +9,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import Image from "next/image";
 import { getSupabaseBrowserClient, isSupabaseConfigured } from "../lib/supabase-client";
-import type { ImportHistoryItem, Profile, ReconciliationRow, TrashWorker } from "../types";
+import type { ImportHistoryItem, Profile, ReconciliationRow, SourceFileTrashItem, TrashWorker } from "../types";
 import type { ExportColumn } from "../lib/excel-export";
 
 type AgentSummary = {
@@ -21,6 +21,22 @@ type AgentSummary = {
 type DashboardView = "operations" | "portal" | "app" | "reconciliation" | "evidence" | "imports" | "audit" | "trash";
 type EvidenceItem = { id: string; category: string; original_filename: string; mime_type: string; captured_at: string; storage_bucket: string; storage_path: string; signedUrl?: string };
 type AuditItem = { id: number; action: string; entity_type: string; entity_id: string | null; actor_id: string | null; created_at: string };
+type PreparedImport = {
+  key: string;
+  sourceType: "master" | "portal";
+  fileName: string;
+  fileSize: number;
+  worksheetName: string;
+  rowCount: number;
+  acceptedRows: number;
+  ignoredOutOfScope: number;
+  warningCount: number;
+  detectedStartDate: string | null;
+  detectedEndDate: string | null;
+  headerMap: Record<string, string>;
+  sampleUserIds: string[];
+  payload: Record<string, unknown>;
+};
 
 const emptyAgent: AgentSummary = { total: 0, completed: 0, running: 0, passwordPending: 0, networkPending: 0, currentUserId: null, currentStage: null, status: "disconnected" };
 const formatCount = new Intl.NumberFormat("en-IN");
@@ -102,6 +118,16 @@ function OperationalDashboard({ session, profile, developmentShell }: { session:
   const [auditItems, setAuditItems] = useState<AuditItem[]>([]);
   const [importItems, setImportItems] = useState<ImportHistoryItem[]>([]);
   const [importHistoryBusy, setImportHistoryBusy] = useState(false);
+  const [preparedImports, setPreparedImports] = useState<PreparedImport[]>([]);
+  const [selectedImportFileIds, setSelectedImportFileIds] = useState<string[]>([]);
+  const [sourceTrashItems, setSourceTrashItems] = useState<SourceFileTrashItem[]>([]);
+  const [selectedSourceTrashIds, setSelectedSourceTrashIds] = useState<string[]>([]);
+  const [sourceTrashBusy, setSourceTrashBusy] = useState(false);
+  const [sourceDeleteConfirmOpen, setSourceDeleteConfirmOpen] = useState(false);
+  const [sourceDeleteConfirmText, setSourceDeleteConfirmText] = useState("");
+  const [sourceDeleteReason, setSourceDeleteReason] = useState("Incorrect or test upload");
+  const [sourcePurgeConfirmOpen, setSourcePurgeConfirmOpen] = useState(false);
+  const [sourcePurgeConfirmText, setSourcePurgeConfirmText] = useState("");
   const [trashItems, setTrashItems] = useState<TrashWorker[]>([]);
   const [trashBusy, setTrashBusy] = useState(false);
   const [selectedWorkerIds, setSelectedWorkerIds] = useState<string[]>([]);
@@ -146,8 +172,25 @@ function OperationalDashboard({ session, profile, developmentShell }: { session:
     setImportHistoryBusy(true);
     const { data, error: historyError } = await supabase.rpc("get_import_history", { p_limit: 250 });
     if (historyError) setError(historyError.message);
-    else setImportItems((data ?? []) as ImportHistoryItem[]);
+    else {
+      const nextItems = (data ?? []) as ImportHistoryItem[];
+      setImportItems(nextItems);
+      setSelectedImportFileIds((current) => current.filter((id) => nextItems.some((item) => item.file_id === id && !item.is_trashed)));
+    }
     setImportHistoryBusy(false);
+  }, [session, supabase]);
+
+  const loadSourceTrash = useCallback(async () => {
+    if (!supabase || !session) return;
+    setSourceTrashBusy(true);
+    const { data, error: sourceTrashError } = await supabase.rpc("get_source_file_trash");
+    if (sourceTrashError) setError(sourceTrashError.message);
+    else {
+      const nextItems = (data ?? []) as SourceFileTrashItem[];
+      setSourceTrashItems(nextItems);
+      setSelectedSourceTrashIds((current) => current.filter((id) => nextItems.some((item) => item.file_id === id)));
+    }
+    setSourceTrashBusy(false);
   }, [session, supabase]);
 
   useEffect(() => {
@@ -160,9 +203,10 @@ function OperationalDashboard({ session, profile, developmentShell }: { session:
       .on("postgres_changes", { event: "*", schema: "public", table: "payment_records" }, () => void loadReport())
       .on("postgres_changes", { event: "*", schema: "public", table: "verification_jobs" }, () => void loadReport())
       .on("postgres_changes", { event: "*", schema: "public", table: "agent_status" }, () => void loadReport())
-      .on("postgres_changes", { event: "*", schema: "public", table: "workers" }, () => { void loadReport(); void loadTrash(); }).subscribe();
+      .on("postgres_changes", { event: "*", schema: "public", table: "workers" }, () => { void loadReport(); void loadTrash(); })
+      .on("postgres_changes", { event: "*", schema: "public", table: "source_files" }, () => { void loadReport(); void loadImportHistory(); void loadSourceTrash(); }).subscribe();
     return () => { void supabase.removeChannel(channel); };
-  }, [loadReport, loadTrash, session, supabase]);
+  }, [loadImportHistory, loadReport, loadSourceTrash, loadTrash, session, supabase]);
   useEffect(() => {
     if (activeView !== "audit" || !supabase || !session) return;
     supabase.from("audit_logs").select("id,action,entity_type,entity_id,actor_id,created_at").order("created_at", { ascending: false }).limit(250)
@@ -170,9 +214,9 @@ function OperationalDashboard({ session, profile, developmentShell }: { session:
   }, [activeView, session, supabase]);
   useEffect(() => {
     if (activeView !== "trash") return;
-    const timer = window.setTimeout(() => void loadTrash(), 0);
+    const timer = window.setTimeout(() => { void loadTrash(); void loadSourceTrash(); }, 0);
     return () => window.clearTimeout(timer);
-  }, [activeView, loadTrash]);
+  }, [activeView, loadSourceTrash, loadTrash]);
   useEffect(() => {
     if (activeView !== "imports") return;
     const timer = window.setTimeout(() => void loadImportHistory(), 0);
@@ -297,6 +341,49 @@ function OperationalDashboard({ session, profile, developmentShell }: { session:
     setTrashBusy(false);
   }
 
+  async function moveSelectedSourcesToTrash() {
+    if (!supabase || !selectedImportFileIds.length || sourceDeleteConfirmText !== "REMOVE") return;
+    setSourceTrashBusy(true); setError(null);
+    const { data, error: sourceError } = await supabase.rpc("trash_source_files", {
+      p_file_ids: selectedImportFileIds,
+      p_reason: sourceDeleteReason.trim() || null,
+    });
+    if (sourceError) setError(sourceError.message);
+    else {
+      setImportStatus(`${Number(data ?? 0)} uploaded source file(s) moved to Trash and excluded from analysis. Master scope or Portal TXN totals were recalculated safely.`);
+      setSelectedImportFileIds([]); setSourceDeleteConfirmOpen(false); setSourceDeleteConfirmText(""); setActiveView("trash");
+      await Promise.all([loadReport(), loadImportHistory(), loadSourceTrash()]);
+    }
+    setSourceTrashBusy(false);
+  }
+
+  async function restoreSelectedSources() {
+    if (!supabase || !selectedSourceTrashIds.length) return;
+    setSourceTrashBusy(true); setError(null);
+    const { data, error: sourceError } = await supabase.rpc("restore_source_files", { p_file_ids: selectedSourceTrashIds });
+    if (sourceError) setError(sourceError.message);
+    else {
+      setImportStatus(`${Number(data ?? 0)} uploaded source file(s) restored to their original Master or Portal destination. Analysis totals were recalculated.`);
+      setSelectedSourceTrashIds([]);
+      await Promise.all([loadReport(), loadImportHistory(), loadSourceTrash()]);
+    }
+    setSourceTrashBusy(false);
+  }
+
+  async function permanentlyDeleteSelectedSources() {
+    if (!supabase || !selectedSourceTrashIds.length || sourcePurgeConfirmText !== "PERMANENT DELETE") return;
+    setSourceTrashBusy(true); setError(null);
+    const { data, error: sourceError } = await supabase.rpc("purge_source_files", { p_file_ids: selectedSourceTrashIds });
+    if (sourceError) setError(sourceError.message);
+    else {
+      const result = (data ?? {}) as { purged_count?: number };
+      setImportStatus(`${Number(result.purged_count ?? 0)} uploaded source file(s) permanently deleted. Audit history was preserved.`);
+      setSelectedSourceTrashIds([]); setSourcePurgeConfirmOpen(false); setSourcePurgeConfirmText("");
+      await Promise.all([loadReport(), loadImportHistory(), loadSourceTrash()]);
+    }
+    setSourceTrashBusy(false);
+  }
+
   async function postImport(path: string, body: unknown) {
     if (!session) throw new Error("Officer sign-in is required.");
     const response = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` }, body: JSON.stringify(body) });
@@ -315,19 +402,33 @@ function OperationalDashboard({ session, profile, developmentShell }: { session:
   }
 
   async function importMaster(file: File) {
-    setActiveView("imports"); setImportBusy(true); setImportStatus(`Reading and validating ${file.name}…`); setError(null);
+    setActiveView("imports"); setImportBusy(true); setImportStatus(`Reading and validating ${file.name} before import…`); setError(null);
     try {
       const [{ readWorkbookRows }, { parseMasterRows }] = await Promise.all([import("../lib/excel-import"), import("../../portal-parser/src/master-parser")]);
       const workbook = await readWorkbookRows(file);
       const parsed = parseMasterRows(workbook.rows);
       if (parsed.errors.length) throw new Error(parsed.errors.slice(0, 8).join(" "));
-      const result = await postImport("/api/import/master", { sourceLabel: file.name, originalFilename: file.name, sha256: workbook.sha256, mimeType: workbook.mimeType, rowCount: workbook.rowCount, headerMap: parsed.headerMap, records: parsed.records });
-      setImportStatus(`${file.name}: upload successful. ${String(result.accepted_rows ?? parsed.records.length)} User IDs reached the Master Registry and encrypted credential store${parsed.warnings.length ? ` with ${parsed.warnings.length} warning(s)` : ""}. Batch ${String(result.batch_id ?? "recorded")}.`);
-      await Promise.all([loadReport(), loadImportHistory()]);
+      setPreparedImports([{
+        key: `master:${workbook.sha256}`,
+        sourceType: "master",
+        fileName: file.name,
+        fileSize: file.size,
+        worksheetName: workbook.worksheetName,
+        rowCount: workbook.rowCount,
+        acceptedRows: parsed.records.length,
+        ignoredOutOfScope: 0,
+        warningCount: parsed.warnings.length,
+        detectedStartDate: null,
+        detectedEndDate: null,
+        headerMap: parsed.headerMap,
+        sampleUserIds: parsed.records.slice(0, 5).map((record) => record.userId),
+        payload: { sourceLabel: file.name, originalFilename: file.name, sha256: workbook.sha256, mimeType: workbook.mimeType, rowCount: workbook.rowCount, headerMap: parsed.headerMap, records: parsed.records },
+      }]);
+      setImportStatus(`${file.name} passed Master-file validation but has not been imported yet. Review the detected columns, row count and sample User IDs, then confirm.`);
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : "Master import failed.";
       await recordImportFailure("master", file.name, message);
-      setError(`${file.name}: upload failed. Nothing from this attempt was added to the Master Registry. ${message}`);
+      setError(`${file.name}: validation failed. Nothing from this file was added to the Master Registry. ${message}`);
       setImportStatus(null);
       await loadImportHistory();
     }
@@ -336,8 +437,8 @@ function OperationalDashboard({ session, profile, developmentShell }: { session:
 
   async function importPortalFiles(files: File[]) {
     if (!supabase || !session || !files.length) return;
-    setActiveView("imports"); setImportBusy(true); setImportStatus(`Preparing ${files.length} portal file(s)…`); setError(null);
-    const { data: workerIds, error: scopeError } = await supabase.from("workers").select("user_id").eq("active", true);
+    setActiveView("imports"); setImportBusy(true); setImportStatus(`Validating ${files.length} portal file(s) before import…`); setError(null);
+    const { data: workerIds, error: scopeError } = await supabase.from("workers").select("user_id").eq("active", true).is("deleted_at", null).is("source_deleted_by_file_id", null);
     if (scopeError) {
       await Promise.all(files.map((file) => recordImportFailure("portal", file.name, scopeError.message)));
       setError(`Portal files could not be checked against the Master Registry. Nothing was imported. ${scopeError.message}`);
@@ -349,30 +450,69 @@ function OperationalDashboard({ session, profile, developmentShell }: { session:
       await Promise.all(files.map((file) => recordImportFailure("portal", file.name, message)));
       setError(`${message} Nothing was imported.`); setImportBusy(false); await loadImportHistory(); return;
     }
-    const summaries: string[] = [];
     const failures: string[] = [];
+    const prepared: PreparedImport[] = [];
     const [{ readWorkbookRows }, { parsePortalRows }] = await Promise.all([import("../lib/excel-import"), import("../../portal-parser/src/parser")]);
     for (let index = 0; index < files.length; index += 1) {
       const file = files[index];
-      setImportStatus(`Processing portal file ${index + 1} of ${files.length}: ${file.name}`);
+      setImportStatus(`Validating portal file ${index + 1} of ${files.length}: ${file.name}`);
       try {
         const workbook = await readWorkbookRows(file);
         const parsed = parsePortalRows(workbook.rows, scope);
         if (parsed.errors.length) throw new Error(parsed.errors.slice(0, 8).join(" "));
         if (!parsed.records.length) throw new Error("No in-scope transaction rows were found.");
-        const result = await postImport("/api/import/portal", { sourceLabel: file.name, originalFilename: file.name, sha256: workbook.sha256, mimeType: workbook.mimeType, rowCount: workbook.rowCount, ignoredOutOfScope: parsed.ignoredOutOfScope, headerMap: parsed.headerMap, records: parsed.records });
-        summaries.push(`${file.name}: ${String(result.accepted_rows ?? parsed.records.length)} accepted, ${String(result.ignored_out_of_scope ?? parsed.ignoredOutOfScope)} outside scope, ${String(result.overlap_warnings ?? 0)} overlap warning(s)`);
+        const dates = parsed.records.map((record) => record.transactionDate).sort();
+        prepared.push({
+          key: `portal:${workbook.sha256}`,
+          sourceType: "portal",
+          fileName: file.name,
+          fileSize: file.size,
+          worksheetName: workbook.worksheetName,
+          rowCount: workbook.rowCount,
+          acceptedRows: parsed.records.length,
+          ignoredOutOfScope: parsed.ignoredOutOfScope,
+          warningCount: parsed.warnings.length + parsed.records.filter((record) => record.possibleDuplicateWithinFile).length,
+          detectedStartDate: dates[0] ?? null,
+          detectedEndDate: dates.at(-1) ?? null,
+          headerMap: parsed.headerMap,
+          sampleUserIds: Array.from(new Set(parsed.records.slice(0, 20).map((record) => record.userId))).slice(0, 5),
+          payload: { sourceLabel: file.name, originalFilename: file.name, sha256: workbook.sha256, mimeType: workbook.mimeType, rowCount: workbook.rowCount, ignoredOutOfScope: parsed.ignoredOutOfScope, headerMap: parsed.headerMap, records: parsed.records },
+        });
       } catch (reason) {
         const message = reason instanceof Error ? reason.message : "failed";
         failures.push(`${file.name}: ${message}`);
         await recordImportFailure("portal", file.name, message);
       }
     }
-    if (failures.length) setError(`${failures.length} file(s) failed and were not added. ${failures.join(" ")}`);
-    setImportStatus(summaries.length ? `Upload completed: ${summaries.join(" • ")}. Accepted rows are stored in Portal Transaction Records.` : null);
+    if (failures.length) setError(`${failures.length} file(s) failed validation and were not added. ${failures.join(" ")}`);
+    setPreparedImports(prepared);
+    setImportStatus(prepared.length ? `${prepared.length} portal file(s) passed validation but are not imported yet. Review filename, mapped columns, in-scope rows and date range, then confirm.` : null);
     setImportBusy(false);
     if (portalInput.current) portalInput.current.value = "";
     if (portalFolderInput.current) portalFolderInput.current.value = "";
+    await loadImportHistory();
+  }
+
+  async function confirmPreparedImports() {
+    if (!preparedImports.length) return;
+    setImportBusy(true); setError(null); setImportStatus(`Importing ${preparedImports.length} confirmed file(s)…`);
+    const summaries: string[] = [];
+    const failures: string[] = [];
+    for (const item of preparedImports) {
+      try {
+        const path = item.sourceType === "master" ? "/api/import/master" : "/api/import/portal";
+        const result = await postImport(path, item.payload);
+        summaries.push(`${item.fileName}: ${String(result.accepted_rows ?? item.acceptedRows)} accepted; batch ${String(result.batch_id ?? "recorded")}`);
+      } catch (reason) {
+        const message = reason instanceof Error ? reason.message : "Import failed.";
+        failures.push(`${item.fileName}: ${message}`);
+        await recordImportFailure(item.sourceType, item.fileName, message);
+      }
+    }
+    setPreparedImports([]);
+    if (failures.length) setError(`${failures.length} confirmed file(s) failed and added no data. ${failures.join(" ")}`);
+    setImportStatus(summaries.length ? `Upload successful. ${summaries.join(" • ")}. The Upload Center now shows the stored destination and final counts.` : null);
+    setImportBusy(false);
     await Promise.all([loadReport(), loadImportHistory()]);
   }
 
@@ -406,9 +546,9 @@ function OperationalDashboard({ session, profile, developmentShell }: { session:
         <section className="section-grid"><article className="card panel"><div className="panel-head"><div><h3>Android Verification Agent</h3><p>Controlled phone queue; technical machinery stays behind these controls.</p></div><span className={`pill ${agent.status === "running" ? "ok" : "pending"}`}>{agent.status === "disconnected" ? "Phone not connected" : agent.status}</span></div><div className="agent-state"><div className="agent-cell"><span>Total IDs</span><strong>{formatCount.format(agent.total)}</strong></div><div className="agent-cell"><span>Completed</span><strong>{formatCount.format(agent.completed)}</strong></div><div className="agent-cell"><span>Current User ID</span><strong>{agent.currentUserId ?? "—"}</strong></div><div className="agent-cell"><span>Current Stage</span><strong>{agent.currentStage ?? "Waiting for device"}</strong></div></div><div className="agent-progress" aria-label={`${progress}% complete`}><span style={{ width: `${progress}%` }} /></div><div className="agent-actions"><button className="button primary" onClick={() => void issueAgentCommand("start")} disabled={!canImport || agent.status === "disconnected"}><Play size={14} /> Start</button><button className="button" onClick={() => void issueAgentCommand("pause")} disabled={!canImport || agent.status !== "running"}><Pause size={14} /> Pause</button><button className="button" onClick={() => void issueAgentCommand("resume")} disabled={!canImport || agent.status !== "paused"}><Play size={14} /> Resume</button><button className="button" onClick={() => void issueAgentCommand("retry_pending")} disabled={!canImport || (!agent.passwordPending && !agent.networkPending)}><RefreshCw size={14} /> Retry pending</button><button className="button danger" onClick={() => void issueAgentCommand("stop_safely")} disabled={!canImport || agent.status === "disconnected" || agent.status === "idle"}><Square size={13} /> Stop safely</button></div></article>
           <article className="card panel"><div className="panel-head"><div><h3>Exception Queue</h3><p>One account never stops the full batch.</p></div><AlertTriangle size={19} color="#b77820" /></div><div className="queue-list"><div className="queue-row"><span>Password issue</span><strong className="amber">{agent.passwordPending}</strong></div><div className="queue-row"><span>Network/server pending</span><strong className="amber">{agent.networkPending}</strong></div><div className="queue-row"><span>Currently running</span><strong>{agent.running}</strong></div><div className="queue-row"><span>Manual review</span><strong className="red">0</strong></div></div></article></section>
         {activeView === "audit" && <section className="card report"><div className="report-header"><div><h3>Audit Log</h3><p>Latest 250 accountable operational events. Access follows officer role policy.</p></div></div><div className="table-wrap"><table className="data-table audit-table"><thead><tr><th>Time</th><th>Action</th><th>Record Type</th><th>Record ID</th><th>Officer ID</th></tr></thead><tbody>{!auditItems.length && <tr><td className="empty" colSpan={5}><Activity size={24} /><strong>No audit events are available to this role.</strong></td></tr>}{auditItems.map((item) => <tr key={item.id}><td>{new Date(item.created_at).toLocaleString()}</td><td><strong>{item.action.replaceAll("_", " ")}</strong></td><td>{item.entity_type.replaceAll("_", " ")}</td><td className="id-code">{item.entity_id ?? "—"}</td><td className="id-code">{item.actor_id ?? "System"}</td></tr>)}</tbody></table></div></section>}
-        {activeView === "imports" && <ImportHistoryPanel items={importItems} busy={importHistoryBusy || importBusy} canImport={canImport} onRefresh={() => void loadImportHistory()} onUploadMaster={() => masterInput.current?.click()} onUploadPortal={() => portalInput.current?.click()} onUploadFolder={() => portalFolderInput.current?.click()} />}
-        {activeView === "trash" && <TrashPanel items={trashItems} selectedIds={selectedTrashIds} busy={trashBusy} canRestore={canManageTrash} canPurge={canPurgeTrash} onToggle={(id) => toggleSelection(id, true)} onSelectAll={() => setSelectedTrashIds(selectedTrashIds.length === trashItems.length ? [] : trashItems.map((item) => item.worker_id))} onRestore={() => void restoreSelectedTrash()} onPurge={() => setPurgeConfirmOpen(true)} onRefresh={() => void loadTrash()} />}
-        <section className={`card report ${activeView === "audit" || activeView === "trash" || activeView === "imports" ? "view-hidden" : ""}`}><div className="report-header"><div><h3>{activeView === "portal" ? "Portal Entry Report" : activeView === "app" ? "App Entry Report" : activeView === "evidence" ? "Evidence Index" : "Combined Reconciliation"}</h3><p>Only records dated {appliedRange.start} through {appliedRange.end} are included. Later dates are excluded until you change and apply the End Date.</p></div><div className="report-actions">{canManageTrash && !!selectedWorkerIds.length && <button className="button danger" onClick={() => setDeleteConfirmOpen(true)}><Trash2 size={15} /> Move {selectedWorkerIds.length} selected to Trash</button>}{canImport && <><input ref={masterInput} hidden type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={(event) => { const file = event.target.files?.[0]; if (file) void importMaster(file); }} /><input ref={portalInput} hidden multiple type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={(event) => void importPortalFiles(Array.from(event.target.files ?? []))} /><input ref={(node) => { portalFolderInput.current = node; if (node) node.setAttribute("webkitdirectory", ""); }} hidden multiple type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={(event) => void importPortalFiles(Array.from(event.target.files ?? []).filter((file) => file.name.toLowerCase().endsWith(".xlsx")))} /><button className="button" disabled={importBusy} onClick={() => masterInput.current?.click()}><HardDriveUpload size={15} /> Upload Master</button><button className="button" disabled={importBusy} onClick={() => portalInput.current?.click()}><FileSpreadsheet size={15} /> Upload Portal Files</button><button className="button" disabled={importBusy} onClick={() => portalFolderInput.current?.click()}><FolderOpen size={15} /> Upload Portal Folder</button></>}<button className="button" onClick={() => setExportOpen(true)} disabled={!rows.length}><Download size={15} /> Export options</button></div></div>
+        {activeView === "imports" && <ImportHistoryPanel items={importItems} selectedFileIds={selectedImportFileIds} busy={importHistoryBusy || importBusy || sourceTrashBusy} canImport={canImport} canManage={canManageTrash} onRefresh={() => void loadImportHistory()} onUploadMaster={() => masterInput.current?.click()} onUploadPortal={() => portalInput.current?.click()} onUploadFolder={() => portalFolderInput.current?.click()} onToggle={(id) => setSelectedImportFileIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id])} onSelectAll={() => { const eligible = importItems.filter((item) => item.file_id && !item.is_trashed && (item.batch_status === "processed" || item.batch_status === "processed_with_warnings")).map((item) => item.file_id!); setSelectedImportFileIds(selectedImportFileIds.length === eligible.length ? [] : eligible); }} onTrash={() => setSourceDeleteConfirmOpen(true)} />}
+        {activeView === "trash" && <><TrashPanel items={trashItems} selectedIds={selectedTrashIds} busy={trashBusy} canRestore={canManageTrash} canPurge={canPurgeTrash} onToggle={(id) => toggleSelection(id, true)} onSelectAll={() => setSelectedTrashIds(selectedTrashIds.length === trashItems.length ? [] : trashItems.map((item) => item.worker_id))} onRestore={() => void restoreSelectedTrash()} onPurge={() => setPurgeConfirmOpen(true)} onRefresh={() => void loadTrash()} /><SourceFileTrashPanel items={sourceTrashItems} selectedIds={selectedSourceTrashIds} busy={sourceTrashBusy} canRestore={canManageTrash} canPurge={canPurgeTrash} onToggle={(id) => setSelectedSourceTrashIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id])} onSelectAll={() => setSelectedSourceTrashIds(selectedSourceTrashIds.length === sourceTrashItems.length ? [] : sourceTrashItems.map((item) => item.file_id))} onRestore={() => void restoreSelectedSources()} onPurge={() => setSourcePurgeConfirmOpen(true)} onRefresh={() => void loadSourceTrash()} /></>}
+        <section className={`card report ${activeView === "audit" || activeView === "trash" || activeView === "imports" ? "view-hidden" : ""}`}><div className="report-header"><div><h3>{activeView === "portal" ? "Portal Entry Report" : activeView === "app" ? "App Entry Report" : activeView === "evidence" ? "Evidence Index" : "Combined Reconciliation"}</h3><p>Only records dated {appliedRange.start} through {appliedRange.end} are included. Later dates are excluded until you change and apply the End Date.</p></div><div className="report-actions">{canManageTrash && <button className="button danger" disabled={!selectedVisibleWorkerIds.length} onClick={() => setDeleteConfirmOpen(true)}><Trash2 size={15} /> {selectedVisibleWorkerIds.length ? `Move ${selectedVisibleWorkerIds.length} selected to Trash` : "Select User IDs to delete"}</button>}{canImport && <><input ref={masterInput} hidden type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={(event) => { const file = event.target.files?.[0]; if (file) void importMaster(file); }} /><input ref={portalInput} hidden multiple type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={(event) => void importPortalFiles(Array.from(event.target.files ?? []))} /><input ref={(node) => { portalFolderInput.current = node; if (node) node.setAttribute("webkitdirectory", ""); }} hidden multiple type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={(event) => void importPortalFiles(Array.from(event.target.files ?? []).filter((file) => file.name.toLowerCase().endsWith(".xlsx")))} /><button className="button" disabled={importBusy} onClick={() => masterInput.current?.click()}><HardDriveUpload size={15} /> Upload Master</button><button className="button" disabled={importBusy} onClick={() => portalInput.current?.click()}><FileSpreadsheet size={15} /> Upload Portal Files</button><button className="button" disabled={importBusy} onClick={() => portalFolderInput.current?.click()}><FolderOpen size={15} /> Upload Portal Folder</button></>}<button className="button" onClick={() => setExportOpen(true)} disabled={!rows.length}><Download size={15} /> Export options</button></div></div>
           <div className="filters"><div className="field search-field"><label htmlFor="search">Search User ID / Name</label><div style={{ position: "relative" }}><Search size={14} style={{ position: "absolute", left: 11, top: 12, color: "#718078" }} /><input id="search" className="control" style={{ paddingLeft: 33 }} value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Type User ID or name" /></div></div><div className="field"><label htmlFor="block">Block</label><select id="block" className="control" value={block} onChange={(event) => setBlock(event.target.value)}><option value="all">All Blocks</option>{blocks.map((name) => <option key={name} value={name}>{name}</option>)}</select></div><div className="field"><label htmlFor="group">Worker Type</label><select id="group" className="control" value={group} onChange={(event) => setGroup(event.target.value)}><option value="all">All Groups</option><option value="Krishi Sakhi">Krishi Sakhi</option><option value="Vendor">Vendor</option></select></div><div className="field"><label htmlFor="start">Start Date</label><input id="start" className="control" type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} /></div><div className="field"><label htmlFor="end">End Date</label><input id="end" className="control" type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} /></div><button className="button primary" style={{ alignSelf: "end" }} onClick={applyFilters}>Apply</button><button className="button" style={{ alignSelf: "end" }} onClick={() => void loadReport()} disabled={reportLoading}><RefreshCw size={14} /> {reportLoading ? "Loading" : "Refresh"}</button></div>
           <div className="table-wrap"><table className="data-table"><thead><tr><th rowSpan={2} className="select-cell"><input type="checkbox" aria-label="Select all visible User IDs" disabled={!canManageTrash || !rows.length} checked={!!rows.length && selectedWorkerIds.length === rows.length} onChange={() => setSelectedWorkerIds(selectedWorkerIds.length === rows.length ? [] : rows.map((row) => row.worker_id))} /></th><th rowSpan={2}>Sl No.</th><th rowSpan={2}>Name</th><th rowSpan={2}>User ID</th><th rowSpan={2}>Password</th><th rowSpan={2} className="num">Portal Entry</th><th rowSpan={2} className="num">App Entry</th><th rowSpan={2} className="num">High Entry</th><th colSpan={2}>Krishi Sakhi</th><th colSpan={2}>Vendor</th><th rowSpan={2}>Status</th><th rowSpan={2}>Evidence</th></tr><tr><th className="num">Amount Received</th><th className="num">Pending Amount</th><th className="num">Amount Received</th><th className="num">Pending Amount</th></tr></thead><tbody>
             {!rows.length && <tr><td className="empty" colSpan={14}><Bot size={26} /><strong>No in-scope records for this view</strong>Upload the master ID sheet and transaction files, or adjust the selected filters.</td></tr>}
@@ -417,32 +557,42 @@ function OperationalDashboard({ session, profile, developmentShell }: { session:
         </section>
       </main>
     </div>
+    {!!preparedImports.length && <div className="modal-backdrop" role="presentation"><section className="modal-card import-review-modal" role="dialog" aria-modal="true" aria-labelledby="import-review-title"><div className="modal-head"><div><h3 id="import-review-title">Review and confirm files</h3><p>Validation passed, but nothing has been imported yet. Confirm only after checking the filename, sheet, columns and sample User IDs.</p></div><button className="icon-button" aria-label="Cancel import review" onClick={() => { setPreparedImports([]); setImportStatus("Import cancelled. No data was added."); }}><X size={18} /></button></div><div className="notice warning"><strong>Final check before upload:</strong> Master files control the User ID/password scope used by the Android bot. Portal files add transaction counts only for active Master User IDs.</div><div className="import-review-list">{preparedImports.map((item) => <article className="import-review-card" key={item.key}><div className="import-review-title"><div><span className="pill pending">{item.sourceType === "master" ? "Master ID / Password" : "Portal TXN"}</span><h4>{item.fileName}</h4><p>{(item.fileSize / 1024).toFixed(1)} KB · Sheet: {item.worksheetName}</p></div><CheckCircle2 size={22} color="#267346" /></div><div className="import-review-stats"><span><small>Rows read</small><strong>{formatCount.format(item.rowCount)}</strong></span><span><small>Accepted</small><strong>{formatCount.format(item.acceptedRows)}</strong></span><span><small>Outside scope</small><strong>{formatCount.format(item.ignoredOutOfScope)}</strong></span><span><small>Warnings</small><strong>{formatCount.format(item.warningCount)}</strong></span></div><p><strong>Detected dates:</strong> {item.detectedStartDate && item.detectedEndDate ? `${item.detectedStartDate} → ${item.detectedEndDate}` : "Not applicable for Master identity data"}</p><p><strong>Sample User IDs:</strong> {item.sampleUserIds.join(", ") || "None detected"}</p><div className="header-map"><strong>Detected Excel columns</strong>{Object.entries(item.headerMap).map(([field, header]) => <span key={field}><code>{field}</code><i>←</i>{header}</span>)}</div></article>)}</div><div className="modal-actions"><span>{preparedImports.length} validated file(s) · not imported yet</span><div className="report-actions"><button className="button" disabled={importBusy} onClick={() => { setPreparedImports([]); setImportStatus("Import cancelled. No data was added."); }}>Cancel</button><button className="button primary" disabled={importBusy} onClick={() => void confirmPreparedImports()}><HardDriveUpload size={15} /> {importBusy ? "Importing…" : "Confirm and import"}</button></div></div></section></div>}
     {exportOpen && <div className="modal-backdrop" role="presentation" onMouseDown={() => setExportOpen(false)}><section className="modal-card" role="dialog" aria-modal="true" aria-labelledby="export-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-head"><div><h3 id="export-title">Excel export</h3><p>The export uses the current filters and inclusive date range.</p></div><button className="icon-button" aria-label="Close export options" onClick={() => setExportOpen(false)}><X size={18} /></button></div><div className="export-presets"><button className="button" onClick={() => setExportColumns(exportOptions.map((option) => option.key))}>Full &amp; Final</button><button className="button" onClick={() => setExportColumns(["serial_no", "name", "user_id", "password", "portal_entry", "app_entry", "high_entry"])}>Core combined</button><button className="button" onClick={() => setExportColumns([])}>Clear selection</button></div><div className="export-grid">{exportOptions.map((option) => <label className="check-row" key={option.key}><input type="checkbox" checked={exportColumns.includes(option.key)} onChange={(event) => setExportColumns((current) => event.target.checked ? [...current, option.key] : current.filter((column) => column !== option.key))} /><span>{option.label}</span></label>)}</div><div className="modal-actions"><span>{exportColumns.length} column(s) selected</span><button className="button primary" disabled={!exportColumns.length || exportBusy} onClick={() => void downloadReport()}><Download size={15} /> {exportBusy ? "Preparing securely…" : "Download Excel"}</button></div></section></div>}
     {evidenceOpen && <div className="modal-backdrop" role="presentation" onMouseDown={() => setEvidenceOpen(null)}><section className="modal-card evidence-modal" role="dialog" aria-modal="true" aria-labelledby="evidence-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-head"><div><h3 id="evidence-title">Evidence — {evidenceOpen.user_id}</h3><p>{evidenceOpen.name} · links expire automatically after five minutes.</p></div><button className="icon-button" aria-label="Close evidence" onClick={() => setEvidenceOpen(null)}><X size={18} /></button></div>{evidenceBusy ? <div className="empty"><RefreshCw className="spin" size={22} /><strong>Opening protected evidence…</strong></div> : !evidenceItems.length ? <div className="empty"><HardDriveUpload size={24} /><strong>No evidence files are available for this User ID.</strong></div> : <div className="evidence-grid">{evidenceItems.map((item) => <article className="evidence-card" key={item.id}>{item.mime_type.startsWith("image/") && item.signedUrl ? <Image unoptimized width={180} height={120} src={item.signedUrl} alt={`${item.category} evidence for ${evidenceOpen.user_id}`} /> : <div className="evidence-file"><FileSpreadsheet size={28} /></div>}<div><span className="pill ok">{item.category.replaceAll("_", " ")}</span><h4>{item.original_filename}</h4><p>{new Date(item.captured_at).toLocaleString()}</p>{item.signedUrl && <a className="button" href={item.signedUrl} target="_blank" rel="noreferrer"><Eye size={14} /> View / retrieve</a>}</div></article>)}</div>}</section></div>}
+    {sourceDeleteConfirmOpen && <div className="modal-backdrop" role="presentation" onMouseDown={() => setSourceDeleteConfirmOpen(false)}><section className="modal-card confirm-card" role="dialog" aria-modal="true" aria-labelledby="source-delete-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-head"><div><h3 id="source-delete-title">Move {selectedImportFileIds.length} uploaded file(s) to Trash?</h3><p>The files and their accepted data will be removed from live analysis, but remain restorable.</p></div><button className="icon-button" aria-label="Close" onClick={() => setSourceDeleteConfirmOpen(false)}><X size={18} /></button></div><div className="notice warning"><strong>Original destination is preserved:</strong> restoring a Master file returns its identities to the Master Registry; restoring a Portal file returns its TXN records to Portal Transaction Records. Totals and scope are recalculated after either action.</div><div className="field"><label htmlFor="source-delete-reason">Reason</label><input id="source-delete-reason" className="control" value={sourceDeleteReason} onChange={(event) => setSourceDeleteReason(event.target.value)} /></div><div className="field confirm-field"><label htmlFor="source-delete-confirm">Type REMOVE to confirm</label><input id="source-delete-confirm" className="control" autoComplete="off" value={sourceDeleteConfirmText} onChange={(event) => setSourceDeleteConfirmText(event.target.value)} /></div><div className="modal-actions"><button className="button" onClick={() => setSourceDeleteConfirmOpen(false)}>Cancel</button><button className="button danger solid-danger" disabled={sourceDeleteConfirmText !== "REMOVE" || sourceTrashBusy} onClick={() => void moveSelectedSourcesToTrash()}><Trash2 size={15} /> Move uploads to Trash</button></div></section></div>}
+    {sourcePurgeConfirmOpen && <div className="modal-backdrop" role="presentation" onMouseDown={() => setSourcePurgeConfirmOpen(false)}><section className="modal-card confirm-card" role="dialog" aria-modal="true" aria-labelledby="source-purge-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-head"><div><h3 id="source-purge-title">Permanently delete {selectedSourceTrashIds.length} uploaded file(s)?</h3><p>This permanently removes the selected source and its data. It cannot be restored.</p></div><button className="icon-button" aria-label="Close" onClick={() => setSourcePurgeConfirmOpen(false)}><X size={18} /></button></div><div className="notice error"><strong>Permanent action:</strong> affected Master identities or Portal transactions will be removed while protected Audit Log entries remain. Project Rekhya recalculates the remaining active source data.</div><div className="field confirm-field"><label htmlFor="source-purge-confirm">Type PERMANENT DELETE to confirm</label><input id="source-purge-confirm" className="control" autoComplete="off" value={sourcePurgeConfirmText} onChange={(event) => setSourcePurgeConfirmText(event.target.value)} /></div><div className="modal-actions"><button className="button" onClick={() => setSourcePurgeConfirmOpen(false)}>Cancel</button><button className="button danger solid-danger" disabled={sourcePurgeConfirmText !== "PERMANENT DELETE" || sourceTrashBusy} onClick={() => void permanentlyDeleteSelectedSources()}><Trash2 size={15} /> Permanently delete uploads</button></div></section></div>}
     {deleteConfirmOpen && <div className="modal-backdrop" role="presentation" onMouseDown={() => setDeleteConfirmOpen(false)}><section className="modal-card confirm-card" role="dialog" aria-modal="true" aria-labelledby="delete-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-head"><div><h3 id="delete-title">Move {selectedWorkerIds.length} User ID dataset(s) to Trash?</h3><p>This removes the selected Master identities and all linked operational data from live reports. Nothing is permanently deleted at this stage.</p></div><button className="icon-button" aria-label="Close" onClick={() => setDeleteConfirmOpen(false)}><X size={18} /></button></div><div className="notice warning"><strong>Recoverable safety stage:</strong> Portal/App records, payments, evidence references, credentials and verification history remain recoverable. Trash keeps a 30-day protection date and remains available until an Admin permanently deletes it.</div><div className="field"><label htmlFor="delete-reason">Reason</label><input id="delete-reason" className="control" value={deleteReason} onChange={(event) => setDeleteReason(event.target.value)} /></div><div className="field confirm-field"><label htmlFor="delete-confirm">Type DELETE to confirm</label><input id="delete-confirm" className="control" autoComplete="off" value={deleteConfirmText} onChange={(event) => setDeleteConfirmText(event.target.value)} /></div><div className="modal-actions"><button className="button" onClick={() => setDeleteConfirmOpen(false)}>Cancel</button><button className="button danger solid-danger" disabled={deleteConfirmText !== "DELETE" || trashBusy} onClick={() => void moveSelectedToTrash()}><Trash2 size={15} /> Move to Trash</button></div></section></div>}
     {purgeConfirmOpen && <div className="modal-backdrop" role="presentation" onMouseDown={() => setPurgeConfirmOpen(false)}><section className="modal-card confirm-card" role="dialog" aria-modal="true" aria-labelledby="purge-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-head"><div><h3 id="purge-title">Permanently delete {selectedTrashIds.length} dataset(s)?</h3><p>This is the final deletion stage and cannot be recovered.</p></div><button className="icon-button" aria-label="Close" onClick={() => setPurgeConfirmOpen(false)}><X size={18} /></button></div><div className="notice error"><strong>Permanent action:</strong> Master identity, encrypted credential, portal/app records, payments, evidence files and verification history for the selected User IDs will be removed. Audit history remains protected.</div><div className="field confirm-field"><label htmlFor="purge-confirm">Type PERMANENT DELETE to confirm</label><input id="purge-confirm" className="control" autoComplete="off" value={purgeConfirmText} onChange={(event) => setPurgeConfirmText(event.target.value)} /></div><div className="modal-actions"><button className="button" onClick={() => setPurgeConfirmOpen(false)}>Cancel</button><button className="button danger solid-danger" disabled={purgeConfirmText !== "PERMANENT DELETE" || trashBusy} onClick={() => void permanentlyDeleteSelectedTrash()}><Trash2 size={15} /> Permanently delete</button></div></section></div>}
   </div>;
 }
 
-function ImportHistoryPanel({ items, busy, canImport, onRefresh, onUploadMaster, onUploadPortal, onUploadFolder }: {
+function ImportHistoryPanel({ items, selectedFileIds, busy, canImport, canManage, onRefresh, onUploadMaster, onUploadPortal, onUploadFolder, onToggle, onSelectAll, onTrash }: {
   items: ImportHistoryItem[];
+  selectedFileIds: string[];
   busy: boolean;
   canImport: boolean;
+  canManage: boolean;
   onRefresh: () => void;
   onUploadMaster: () => void;
   onUploadPortal: () => void;
   onUploadFolder: () => void;
+  onToggle: (id: string) => void;
+  onSelectAll: () => void;
+  onTrash: () => void;
 }) {
+  const eligibleIds = items.filter((item) => item.file_id && !item.is_trashed && (item.batch_status === "processed" || item.batch_status === "processed_with_warnings")).map((item) => item.file_id!);
   return <section className="card report upload-panel">
-    <div className="report-header"><div><h3>Upload and processing history</h3><p>Every accepted or failed attempt is listed here with its exact system destination.</p></div><div className="report-actions"><button className="button" onClick={onRefresh} disabled={busy}><RefreshCw size={14} /> Refresh</button><button className="button" onClick={onUploadMaster} disabled={!canImport || busy}><HardDriveUpload size={14} /> Upload Master</button><button className="button" onClick={onUploadPortal} disabled={!canImport || busy}><FileSpreadsheet size={14} /> Upload Portal Files</button><button className="button" onClick={onUploadFolder} disabled={!canImport || busy}><FolderOpen size={14} /> Upload Portal Folder</button></div></div>
-    <div className="notice upload-note"><strong>Where does the Excel file go?</strong> Project Rekhya validates the workbook in your browser, then saves accepted data into the destination shown below. Filename, hash-linked source record, counts, dates, status and audit event are retained. The original Excel workbook itself is not archived as a downloadable file.</div>
-    <div className="table-wrap"><table className="data-table upload-table"><thead><tr><th>Time</th><th>Type</th><th>Filename</th><th>Status</th><th className="num">Accepted / Read</th><th className="num">Outside Scope</th><th className="num">Warnings</th><th>Detected Date Range</th><th>System Destination</th><th>Result / Error</th></tr></thead><tbody>
-      {!items.length && <tr><td className="empty" colSpan={10}><FolderOpen size={25} /><strong>{busy ? "Checking upload history…" : "No uploads recorded"}</strong>Choose Master, Portal Files or a Portal Folder. Success and failure details will remain visible here.</td></tr>}
+    <div className="report-header"><div><h3>Upload and processing history</h3><p>Every accepted or failed attempt is listed here with its exact filename, outcome and system destination.</p></div><div className="report-actions"><button className="button" onClick={onRefresh} disabled={busy}><RefreshCw size={14} /> Refresh</button><button className="button danger" onClick={onTrash} disabled={!canManage || !selectedFileIds.length || busy}><Trash2 size={14} /> {selectedFileIds.length ? `Move ${selectedFileIds.length} selected upload(s) to Trash` : "Select uploads to remove"}</button><button className="button" onClick={onUploadMaster} disabled={!canImport || busy}><HardDriveUpload size={14} /> Upload Master</button><button className="button" onClick={onUploadPortal} disabled={!canImport || busy}><FileSpreadsheet size={14} /> Upload Portal Files</button><button className="button" onClick={onUploadFolder} disabled={!canImport || busy}><FolderOpen size={14} /> Upload Portal Folder</button></div></div>
+    <div className="notice upload-note"><strong>How upload confirmation works:</strong> first, a review screen shows the exact filename, sheet, detected columns, accepted rows, sample User IDs and Portal date range. Nothing is imported until you press “Confirm and import”. After import, this history keeps the success/error, batch, counts and destination. The original Excel workbook itself is not archived as a downloadable file.</div>
+    <div className="table-wrap"><table className="data-table upload-table"><thead><tr><th className="select-cell"><input type="checkbox" aria-label="Select all removable uploads" disabled={!canManage || !eligibleIds.length} checked={!!eligibleIds.length && selectedFileIds.length === eligibleIds.length} onChange={onSelectAll} /></th><th>Time</th><th>Type</th><th>Filename</th><th>Status</th><th className="num">Accepted / Read</th><th className="num">Outside Scope</th><th className="num">Warnings</th><th>Detected Date Range</th><th>System Destination</th><th>Result / Error</th></tr></thead><tbody>
+      {!items.length && <tr><td className="empty" colSpan={11}><FolderOpen size={25} /><strong>{busy ? "Checking upload history…" : "No uploads recorded"}</strong>Choose Master, Portal Files or a Portal Folder. Success and failure details will remain visible here.</td></tr>}
       {items.map((item) => {
         const successful = item.batch_status === "processed" || item.batch_status === "processed_with_warnings";
-        const statusClass = item.batch_status === "failed" ? "error" : successful ? "ok" : "pending";
+        const removable = !!item.file_id && successful && !item.is_trashed;
+        const statusClass = item.batch_status === "failed" ? "error" : item.is_trashed ? "pending" : successful ? "ok" : "pending";
         const dateRange = item.detected_start_date && item.detected_end_date ? `${item.detected_start_date} → ${item.detected_end_date}` : "—";
-        return <tr key={item.batch_id}><td>{new Date(item.created_at).toLocaleString()}</td><td><span className="pill pending">{item.source_type === "master" ? "Master" : "Portal"}</span></td><td><strong>{item.original_filename ?? item.source_label}</strong><br /><span className="table-note">Batch {item.batch_id.slice(0, 8)}</span></td><td><span className={`pill ${statusClass}`}>{item.batch_status.replaceAll("_", " ")}</span></td><td className="num"><strong>{formatCount.format(item.accepted_row_count)}</strong> / {formatCount.format(item.row_count)}</td><td className="num">{formatCount.format(item.ignored_out_of_scope_count)}</td><td className="num">{formatCount.format(Math.max(item.warning_count, item.duplicate_row_count))}</td><td>{dateRange}</td><td><strong>{item.data_destination}</strong><br /><span className="table-note">{successful ? "Accepted data is available in this section." : "No data was accepted from this failed attempt."}</span></td><td>{item.error_message ? <span className="upload-error">{item.error_message}</span> : <span className="upload-success"><CheckCircle2 size={13} /> Completed and audited</span>}</td></tr>;
+        return <tr key={item.batch_id} className={item.file_id && selectedFileIds.includes(item.file_id) ? "selected-row" : ""}><td className="select-cell"><input type="checkbox" aria-label={`Select uploaded ${item.original_filename ?? item.source_label}`} disabled={!canManage || !removable} checked={!!item.file_id && selectedFileIds.includes(item.file_id)} onChange={() => item.file_id && onToggle(item.file_id)} /></td><td>{new Date(item.created_at).toLocaleString()}</td><td><span className="pill pending">{item.source_type === "master" ? "Master ID / Password" : "Portal TXN"}</span></td><td><strong>{item.original_filename ?? item.source_label}</strong><br /><span className="table-note">Batch {item.batch_id.slice(0, 8)}</span></td><td><span className={`pill ${statusClass}`}>{item.is_trashed ? "in trash" : item.batch_status.replaceAll("_", " ")}</span></td><td className="num"><strong>{formatCount.format(item.accepted_row_count)}</strong> / {formatCount.format(item.row_count)}</td><td className="num">{formatCount.format(item.ignored_out_of_scope_count)}</td><td className="num">{formatCount.format(Math.max(item.warning_count, item.duplicate_row_count))}</td><td>{dateRange}</td><td><strong>{item.data_destination}</strong><br /><span className="table-note">{item.is_trashed ? "Excluded from live analysis; available in Trash." : successful ? "Accepted data is active in this original destination." : "No data was accepted from this failed attempt."}</span></td><td>{item.error_message ? <span className="upload-error">{item.error_message}</span> : item.is_trashed ? <span className="table-note">Removed from analysis on {item.file_deleted_at ? new Date(item.file_deleted_at).toLocaleString() : "recorded date"}</span> : <span className="upload-success"><CheckCircle2 size={13} /> Completed and audited</span>}</td></tr>;
       })}
     </tbody></table></div>
   </section>;
@@ -461,11 +611,33 @@ function TrashPanel({ items, selectedIds, busy, canRestore, canPurge, onToggle, 
   onRefresh: () => void;
 }) {
   return <section className="card report trash-panel">
-    <div className="report-header"><div><h3>Recoverable operational data</h3><p>Deleted items remain restorable. The 30-day date is a protection marker; nothing is auto-purged.</p></div><div className="report-actions"><button className="button" onClick={onRefresh} disabled={busy}><RefreshCw size={14} /> Refresh</button><button className="button" onClick={onRestore} disabled={!canRestore || !selectedIds.length || busy}><RotateCcw size={14} /> Restore selected</button><button className="button danger" onClick={onPurge} disabled={!canPurge || !selectedIds.length || busy}><Trash2 size={14} /> Permanent delete</button></div></div>
+    <div className="report-header"><div><h3>User ID datasets</h3><p>Deleted Master identities and all their linked operational records remain restorable. The 30-day date is a protection marker; nothing is auto-purged.</p></div><div className="report-actions"><button className="button" onClick={onRefresh} disabled={busy}><RefreshCw size={14} /> Refresh</button><button className="button" onClick={onRestore} disabled={!canRestore || !selectedIds.length || busy}><RotateCcw size={14} /> Restore selected</button><button className="button danger" onClick={onPurge} disabled={!canPurge || !selectedIds.length || busy}><Trash2 size={14} /> Permanent delete</button></div></div>
     <div className="notice warning trash-note"><strong>Two-stage protection:</strong> live report deletion first moves data here. Linked records are not moved to another table or directory. Restore reactivates the same User ID, original Block/Group and the same portal, app, payment, evidence and verification references. Permanent delete is Admin-only and requires a second typed confirmation.</div>
     <div className="table-wrap"><table className="data-table trash-table"><thead><tr><th className="select-cell"><input type="checkbox" aria-label="Select all Trash items" disabled={!items.length || !canRestore} checked={!!items.length && selectedIds.length === items.length} onChange={onSelectAll} /></th><th>Name</th><th>User ID</th><th>Block / Group</th><th>Deleted</th><th>Protected through</th><th>Deleted by</th><th className="num">Portal</th><th className="num">App</th><th className="num">Evidence</th><th className="num">Payments</th><th className="num">Runs</th></tr></thead><tbody>
       {!items.length && <tr><td className="empty" colSpan={12}><Trash2 size={25} /><strong>{busy ? "Loading Trash…" : "Trash is empty"}</strong>No operational datasets are waiting for recovery or permanent deletion.</td></tr>}
       {items.map((item) => <tr key={item.worker_id} className={selectedIds.includes(item.worker_id) ? "selected-row" : ""}><td className="select-cell"><input type="checkbox" aria-label={`Select deleted ${item.user_id}`} disabled={!canRestore} checked={selectedIds.includes(item.worker_id)} onChange={() => onToggle(item.worker_id)} /></td><td><strong>{item.name}</strong>{item.deletion_reason && <><br /><span className="table-note">{item.deletion_reason}</span></>}</td><td className="id-code">{item.user_id}</td><td>{item.block ?? "—"}<br /><span className="table-note">{item.group_name ?? "Group not set"}</span></td><td>{new Date(item.deleted_at).toLocaleString()}</td><td>{new Date(item.retention_until).toLocaleDateString()}</td><td>{item.deleted_by_name ?? "—"}</td><td className="num">{formatCount.format(item.portal_count)}</td><td className="num">{formatCount.format(item.app_count)}</td><td className="num">{formatCount.format(item.evidence_count)}</td><td className="num">{formatCount.format(item.payment_count)}</td><td className="num">{formatCount.format(item.verification_count)}</td></tr>)}
+    </tbody></table></div>
+  </section>;
+}
+
+function SourceFileTrashPanel({ items, selectedIds, busy, canRestore, canPurge, onToggle, onSelectAll, onRestore, onPurge, onRefresh }: {
+  items: SourceFileTrashItem[];
+  selectedIds: string[];
+  busy: boolean;
+  canRestore: boolean;
+  canPurge: boolean;
+  onToggle: (id: string) => void;
+  onSelectAll: () => void;
+  onRestore: () => void;
+  onPurge: () => void;
+  onRefresh: () => void;
+}) {
+  return <section className="card report source-trash-panel">
+    <div className="report-header"><div><h3>Uploaded source files</h3><p>Wrong Master ID/Password and Portal TXN uploads removed from the Upload Center appear here.</p></div><div className="report-actions"><button className="button" onClick={onRefresh} disabled={busy}><RefreshCw size={14} /> Refresh</button><button className="button" onClick={onRestore} disabled={!canRestore || !selectedIds.length || busy}><RotateCcw size={14} /> Restore selected uploads</button><button className="button danger" onClick={onPurge} disabled={!canPurge || !selectedIds.length || busy}><Trash2 size={14} /> Permanent delete uploads</button></div></div>
+    <div className="notice warning trash-note"><strong>Exact-location restore:</strong> a restored Master file returns to the Master Registry and a restored Portal file returns to Portal Transaction Records. It never changes directory. The report and Android-bot scope are recalculated from all active source files.</div>
+    <div className="table-wrap"><table className="data-table source-trash-table"><thead><tr><th className="select-cell"><input type="checkbox" aria-label="Select all uploaded source Trash items" disabled={!items.length || !canRestore} checked={!!items.length && selectedIds.length === items.length} onChange={onSelectAll} /></th><th>Type</th><th>Filename</th><th>Original destination</th><th>Deleted</th><th>Protected through</th><th>Deleted by</th><th>Reason</th><th className="num">Accepted / Read</th><th className="num">Affected records</th><th>Date Range</th></tr></thead><tbody>
+      {!items.length && <tr><td className="empty" colSpan={11}><FolderOpen size={25} /><strong>{busy ? "Loading uploaded-file Trash…" : "No uploaded files are in Trash"}</strong>Use the Upload Center checkboxes to move an incorrect successful upload here.</td></tr>}
+      {items.map((item) => <tr key={item.file_id} className={selectedIds.includes(item.file_id) ? "selected-row" : ""}><td className="select-cell"><input type="checkbox" aria-label={`Select deleted upload ${item.filename}`} disabled={!canRestore} checked={selectedIds.includes(item.file_id)} onChange={() => onToggle(item.file_id)} /></td><td><span className="pill pending">{item.source_type === "master" ? "Master ID / Password" : "Portal TXN"}</span></td><td><strong>{item.filename}</strong><br /><span className="table-note">Batch {item.batch_id.slice(0, 8)}</span></td><td><strong>{item.data_destination}</strong></td><td>{new Date(item.deleted_at).toLocaleString()}</td><td>{new Date(item.retention_until).toLocaleDateString()}</td><td>{item.deleted_by_name ?? "—"}</td><td>{item.deletion_reason ?? "—"}</td><td className="num"><strong>{formatCount.format(item.accepted_row_count)}</strong> / {formatCount.format(item.row_count)}</td><td className="num">{formatCount.format(item.affected_record_count)}</td><td>{item.detected_start_date && item.detected_end_date ? `${item.detected_start_date} → ${item.detected_end_date}` : "—"}</td></tr>)}
     </tbody></table></div>
   </section>;
 }

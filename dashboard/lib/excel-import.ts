@@ -34,5 +34,12 @@ export async function readWorkbookRows(file: File) {
     if (hasValue) rows.push(record);
   }
   const sha256 = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
-  return { rows, sha256, mimeType: file.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", rowCount: rows.length };
+  return {
+    rows,
+    headers,
+    worksheetName: worksheet.name,
+    sha256,
+    mimeType: file.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    rowCount: rows.length,
+  };
 }

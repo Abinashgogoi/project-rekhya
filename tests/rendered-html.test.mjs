@@ -43,7 +43,11 @@ test("bundles persistent upload feedback and exact-location restore guidance", a
   assert.ok(dashboardAsset, "dashboard client asset should exist");
   const source = await readFile(path.join(assetsDirectory, dashboardAsset), "utf8");
   assert.match(source, /Upload and processing history/);
-  assert.match(source, /upload failed\. Nothing from this attempt was added/);
+  assert.match(source, /Review and confirm files/);
+  assert.match(source, /validation failed\. Nothing from this file was added/);
+  assert.match(source, /Move .*selected upload\(s\) to Trash/);
   assert.match(source, /Linked records are not moved to another table or directory/);
+  assert.match(source, /Exact-location restore/);
+  assert.match(source, /Uploaded source files/);
   assert.match(source, /Upload Portal Folder/);
 });
