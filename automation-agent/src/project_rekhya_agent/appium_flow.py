@@ -52,11 +52,11 @@ class AppiumFlow:
         self._find(self.profile.locators("sim_number_open"), timeout=20).click()
         field = self._find(self.profile.locators("sim_number_field"), timeout=20)
         field.click(); field.clear(); field.send_keys(expected_user_id)
-        self._find(self.profile.locators("sim_number_save")).click()
-        sleep(1)
         saved = self._text("sim_number_value")
         if saved.replace(" ", "") != expected_user_id:
-            raise ManualReviewRequired("SIM number was not saved as the expected User ID")
+            raise ManualReviewRequired("SIM number editor does not contain the expected User ID")
+        self._find(self.profile.locators("sim_number_save")).click()
+        sleep(1)
 
     def verify_account(self, expected_user_id: str, worker_name: str, password: str, start_date: date, end_date: date) -> JobResult:
         result = JobResult(expected_user_id=expected_user_id)
