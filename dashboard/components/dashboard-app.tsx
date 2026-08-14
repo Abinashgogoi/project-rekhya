@@ -405,28 +405,43 @@ function OperationalDashboard({ session, profile, developmentShell }: { session:
   async function importMaster(file: File) {
     setActiveView("imports"); setImportBusy(true); setImportStatus(`Reading and validating ${file.name} before import…`); setError(null);
     try {
-      const [{ readWorkbookRows }, { parseMasterRows }] = await Promise.all([import("../lib/excel-import"), import("../../portal-parser/src/master-parser")]);
+      const [{ readWorkbookRows }, { inferMasterSheetContext, parseMasterRows }] = await Promise.all([import("../lib/excel-import"), import("../../portal-parser/src/master-parser")]);
       const workbook = await readWorkbookRows(file, "master");
-      const parsed = parseMasterRows(workbook.rows);
-      if (parsed.errors.length) throw new Error(parsed.errors.slice(0, 8).join(" "));
+      const parsedSheets = workbook.sheets.map((sheet) => ({ sheet, parsed: parseMasterRows(sheet.rows, inferMasterSheetContext(sheet.worksheetName)) }));
+      const validationMessages = parsedSheets.flatMap(({ parsed }) => [...parsed.errors, ...parsed.warnings]);
+      const uniqueRecords = new Map<string, ReturnType<typeof parseMasterRows>["records"][number]>();
+      let duplicateUserIds = 0;
+      for (const { parsed } of parsedSheets) {
+        for (const record of parsed.records) {
+          if (uniqueRecords.has(record.userId)) { duplicateUserIds += 1; continue; }
+          uniqueRecords.set(record.userId, record);
+        }
+      }
+      const records = [...uniqueRecords.values()];
+      if (!records.length) throw new Error(validationMessages.slice(0, 8).join(" ") || "No valid Master User ID rows were found.");
+      const missingPasswords = records.filter((record) => !record.password).length;
+      const headerMap = Object.fromEntries(parsedSheets.map(({ sheet, parsed }) => [
+        sheet.worksheetName,
+        `row ${sheet.headerRowNumber}: ${Object.entries(parsed.headerMap).map(([field, header]) => `${field}←${header}`).join(", ")}`,
+      ]));
       setPreparedImports([{
         key: `master:${workbook.sha256}`,
         sourceType: "master",
         fileName: file.name,
         fileSize: file.size,
-        worksheetName: workbook.worksheetName,
+        worksheetName: workbook.sheets.length === 1 ? workbook.sheets[0].worksheetName : `${workbook.sheets.length} data sheets`,
         headerRowNumber: workbook.headerRowNumber,
         rowCount: workbook.rowCount,
-        acceptedRows: parsed.records.length,
+        acceptedRows: records.length,
         ignoredOutOfScope: 0,
-        warningCount: parsed.warnings.length,
+        warningCount: validationMessages.length + duplicateUserIds,
         detectedStartDate: null,
         detectedEndDate: null,
-        headerMap: { ...parsed.headerMap, headerRow: String(workbook.headerRowNumber) },
-        sampleUserIds: parsed.records.slice(0, 5).map((record) => record.userId),
-        payload: { sourceLabel: file.name, originalFilename: file.name, sha256: workbook.sha256, mimeType: workbook.mimeType, rowCount: workbook.rowCount, headerMap: parsed.headerMap, records: parsed.records },
+        headerMap,
+        sampleUserIds: records.slice(0, 5).map((record) => record.userId),
+        payload: { sourceLabel: file.name, originalFilename: file.name, sha256: workbook.sha256, mimeType: workbook.mimeType, rowCount: workbook.rowCount, headerMap, records },
       }]);
-      setImportStatus(`${file.name} passed Master-file validation but has not been imported yet. Review the detected columns, row count and sample User IDs, then confirm.`);
+      setImportStatus(`${file.name} passed multi-sheet Master validation: ${records.length} unique User IDs ready; ${missingPasswords} missing passwords will remain in scope but pending; ${duplicateUserIds} duplicate User ID row(s) skipped. Nothing has been imported yet.`);
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : "Master import failed.";
       await recordImportFailure("master", file.name, message);
@@ -460,26 +475,33 @@ function OperationalDashboard({ session, profile, developmentShell }: { session:
       setImportStatus(`Validating portal file ${index + 1} of ${files.length}: ${file.name}`);
       try {
         const workbook = await readWorkbookRows(file, "portal");
-        const parsed = parsePortalRows(workbook.rows, scope);
-        if (parsed.errors.length) throw new Error(parsed.errors.slice(0, 8).join(" "));
-        if (!parsed.records.length) throw new Error("No in-scope transaction rows were found.");
-        const dates = parsed.records.map((record) => record.transactionDate).sort();
+        const parsedSheets = workbook.sheets.map((sheet) => ({ sheet, parsed: parsePortalRows(sheet.rows, scope) }));
+        const errors = parsedSheets.flatMap(({ parsed }) => parsed.errors);
+        const warnings = parsedSheets.flatMap(({ parsed }) => parsed.warnings);
+        const records = parsedSheets.flatMap(({ parsed }) => parsed.records).map((record, recordIndex) => ({ ...record, sourceRowNumber: recordIndex + 1 }));
+        if (!records.length) throw new Error(errors.slice(0, 8).join(" ") || "No in-scope transaction rows were found.");
+        const ignoredOutOfScope = parsedSheets.reduce((total, { parsed }) => total + parsed.ignoredOutOfScope, 0);
+        const dates = records.map((record) => record.transactionDate).sort();
+        const headerMap = Object.fromEntries(parsedSheets.map(({ sheet, parsed }) => [
+          sheet.worksheetName,
+          `row ${sheet.headerRowNumber}: ${Object.entries(parsed.headerMap).map(([field, header]) => `${field}←${header}`).join(", ")}`,
+        ]));
         prepared.push({
           key: `portal:${workbook.sha256}`,
           sourceType: "portal",
           fileName: file.name,
           fileSize: file.size,
-          worksheetName: workbook.worksheetName,
+          worksheetName: workbook.sheets.length === 1 ? workbook.sheets[0].worksheetName : `${workbook.sheets.length} data sheets`,
           headerRowNumber: workbook.headerRowNumber,
           rowCount: workbook.rowCount,
-          acceptedRows: parsed.records.length,
-          ignoredOutOfScope: parsed.ignoredOutOfScope,
-          warningCount: parsed.warnings.length + parsed.records.filter((record) => record.possibleDuplicateWithinFile).length,
+          acceptedRows: records.length,
+          ignoredOutOfScope,
+          warningCount: warnings.length + errors.length + records.filter((record) => record.possibleDuplicateWithinFile).length,
           detectedStartDate: dates[0] ?? null,
           detectedEndDate: dates.at(-1) ?? null,
-          headerMap: { ...parsed.headerMap, headerRow: String(workbook.headerRowNumber) },
-          sampleUserIds: Array.from(new Set(parsed.records.slice(0, 20).map((record) => record.userId))).slice(0, 5),
-          payload: { sourceLabel: file.name, originalFilename: file.name, sha256: workbook.sha256, mimeType: workbook.mimeType, rowCount: workbook.rowCount, ignoredOutOfScope: parsed.ignoredOutOfScope, headerMap: parsed.headerMap, records: parsed.records },
+          headerMap,
+          sampleUserIds: Array.from(new Set(records.slice(0, 20).map((record) => record.userId))).slice(0, 5),
+          payload: { sourceLabel: file.name, originalFilename: file.name, sha256: workbook.sha256, mimeType: workbook.mimeType, rowCount: workbook.rowCount, ignoredOutOfScope, headerMap, records },
         });
       } catch (reason) {
         const message = reason instanceof Error ? reason.message : "failed";

@@ -10,7 +10,7 @@ function definitionsFor(kind: WorkbookKind) {
 }
 
 function requiredFieldsFor(kind: WorkbookKind) {
-  return kind === "master" ? new Set(["name", "userId", "password"]) : new Set(["userId", "transactionDate"]);
+  return kind === "master" ? new Set(["name", "userId"]) : new Set(["userId", "transactionDate"]);
 }
 
 export function scoreWorkbookHeader(headers: string[], kind: WorkbookKind) {
@@ -59,49 +59,63 @@ export async function readWorkbookRows(file: File, kind: WorkbookKind) {
   await workbook.xlsx.load(bytes);
   if (!workbook.worksheets.length) throw new Error(`${file.name}: workbook contains no worksheet.`);
 
-  let selectedWorksheet = workbook.worksheets[0];
-  let selectedHeaderRow = 1;
-  let selectedScore = -1;
+  const sheets: Array<{
+    worksheetName: string;
+    headerRowNumber: number;
+    headers: string[];
+    rows: Array<Record<string, unknown>>;
+    rowCount: number;
+  }> = [];
+  const requiredMatchCount = requiredFieldsFor(kind).size;
   for (const candidateWorksheet of workbook.worksheets) {
-    const scanLimit = Math.min(candidateWorksheet.actualRowCount, 30);
+    // rowCount is the last populated row number. actualRowCount is only a count
+    // of non-empty rows, so it truncates sheets that begin with title/blank rows.
+    const scanLimit = Math.min(candidateWorksheet.rowCount, 30);
     const candidateRows: string[][] = [];
     for (let rowNumber = 1; rowNumber <= scanLimit; rowNumber += 1) {
       const values = candidateWorksheet.getRow(rowNumber).values as ExcelJS.CellValue[];
       candidateRows.push(values.slice(1).map((value) => String(cellValue(value) ?? "").trim()));
     }
     const candidate = findLikelyHeaderRow(candidateRows, kind);
-    if (candidate.score > selectedScore) {
-      selectedWorksheet = candidateWorksheet;
-      selectedHeaderRow = candidate.rowNumber;
-      selectedScore = candidate.score;
+    if (candidate.requiredMatches < requiredMatchCount) continue;
+    const headerCells = candidateWorksheet.getRow(candidate.rowNumber).values as ExcelJS.CellValue[];
+    const headers = headerCells.slice(1).map((value) => String(cellValue(value) ?? "").trim());
+    if (!headers.some(Boolean)) continue;
+    const rows: Array<Record<string, unknown>> = [];
+    for (let rowNumber = candidate.rowNumber + 1; rowNumber <= candidateWorksheet.rowCount; rowNumber += 1) {
+      const row = candidateWorksheet.getRow(rowNumber);
+      const record: Record<string, unknown> = {
+        __projectRekhyaWorksheetName: candidateWorksheet.name,
+        __projectRekhyaSourceRowNumber: rowNumber,
+      };
+      let hasValue = false;
+      headers.forEach((header, index) => {
+        if (!header) return;
+        const value = cellValue(row.getCell(index + 1).value);
+        record[header] = value;
+        if (value !== null && value !== undefined && value !== "") hasValue = true;
+      });
+      if (hasValue) rows.push(record);
     }
-  }
-
-  const worksheet = selectedWorksheet;
-  const headerCells = worksheet.getRow(selectedHeaderRow).values as ExcelJS.CellValue[];
-  const headers = headerCells.slice(1).map((value) => String(cellValue(value) ?? "").trim());
-  if (!headers.some(Boolean)) throw new Error(`${file.name}: no usable column-heading row was found in the first 30 rows.`);
-  const rows: Array<Record<string, unknown>> = [];
-  for (let rowNumber = selectedHeaderRow + 1; rowNumber <= worksheet.actualRowCount; rowNumber += 1) {
-    const row = worksheet.getRow(rowNumber);
-    const record: Record<string, unknown> = {};
-    let hasValue = false;
-    headers.forEach((header, index) => {
-      if (!header) return;
-      const value = cellValue(row.getCell(index + 1).value);
-      record[header] = value;
-      if (value !== null && value !== undefined && value !== "") hasValue = true;
+    if (rows.length) sheets.push({
+      worksheetName: candidateWorksheet.name,
+      headerRowNumber: candidate.rowNumber,
+      headers,
+      rows,
+      rowCount: rows.length,
     });
-    if (hasValue) rows.push(record);
   }
+  if (!sheets.length) throw new Error(`${file.name}: no worksheet with the required ${kind === "master" ? "Name and User ID/Mobile" : "User ID and transaction date"} headings was found in the first 30 rows.`);
   const sha256 = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+  const primarySheet = sheets[0];
   return {
-    rows,
-    headers,
-    worksheetName: worksheet.name,
-    headerRowNumber: selectedHeaderRow,
+    sheets,
+    rows: sheets.flatMap((sheet) => sheet.rows),
+    headers: primarySheet.headers,
+    worksheetName: sheets.map((sheet) => sheet.worksheetName).join(", "),
+    headerRowNumber: primarySheet.headerRowNumber,
     sha256,
     mimeType: file.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    rowCount: rows.length,
+    rowCount: sheets.reduce((total, sheet) => total + sheet.rowCount, 0),
   };
 }

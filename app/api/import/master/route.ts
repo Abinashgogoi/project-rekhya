@@ -2,7 +2,7 @@ import { z } from "zod";
 import { apiFailure, requireOfficer } from "../../../../backend/auth";
 import { encryptCredential } from "../../../../backend/crypto";
 
-const masterRecord = z.object({ sourceRowNumber: z.number().int().positive(), name: z.string().trim().min(1), userId: z.string().trim().min(1), password: z.string().min(1), block: z.string().nullable(), group: z.enum(["Krishi Sakhi", "Vendor"]).nullable(), rawFields: z.record(z.string(), z.unknown()) });
+const masterRecord = z.object({ sourceRowNumber: z.number().int().positive(), name: z.string().trim().min(1), userId: z.string().trim().min(1), password: z.string(), block: z.string().nullable(), group: z.enum(["Krishi Sakhi", "Vendor", "SeSTA"]).nullable(), rawFields: z.record(z.string(), z.unknown()) });
 const bodySchema = z.object({ sourceLabel: z.string().trim().min(1), originalFilename: z.string().trim().min(1), sha256: z.string().regex(/^[0-9a-f]{64}$/i), mimeType: z.string().trim().min(1), rowCount: z.number().int().nonnegative(), headerMap: z.record(z.string(), z.string()), records: z.array(masterRecord).min(1) });
 
 export async function POST(request: Request) {

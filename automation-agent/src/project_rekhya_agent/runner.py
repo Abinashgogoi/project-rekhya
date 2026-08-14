@@ -52,6 +52,9 @@ class AgentRunner:
                 while True:
                     try:
                         password = self.cloud.credential(self.settings.dashboard_url, worker["id"])
+                        if not password.strip():
+                            self.cloud.update_job(job["id"], {"status": "pending", "issue_type": "password", "error_message": "Password is missing in the uploaded Master workbook.", "password_attempts": 0, "completed_at": "now()"})
+                            break
                         result = flow.verify_account(worker["user_id"], worker["name"], password, start_date, end_date)
                         if result.issue_type and result.issue_type.value == "password" and budget.allow_password_retry():
                             continue

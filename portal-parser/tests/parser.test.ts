@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseMasterRows } from "../src/master-parser";
+import ExcelJS from "exceljs";
+import { detectHeaderMap } from "../src/header-map";
+import { inferMasterSheetContext, masterHeaders, parseMasterRows } from "../src/master-parser";
 import { parsePortalRows } from "../src/parser";
 import { parseExcelDate } from "../src/normalize";
-import { findLikelyHeaderRow } from "../../dashboard/lib/excel-import";
+import { findLikelyHeaderRow, readWorkbookRows } from "../../dashboard/lib/excel-import";
 
 test("portal parser includes only master-scoped User IDs", () => {
   const result = parsePortalRows([
@@ -36,6 +38,36 @@ test("master parser rejects duplicate authoritative IDs", () => {
   assert.match(result.errors[0], /duplicates row 2/);
 });
 
+test("explicit User ID takes priority over Mobile No without ambiguity", () => {
+  const detected = detectHeaderMap(["Name", "Mobile No.", "User ID", "Password"], masterHeaders, ["name", "userId"]);
+  assert.equal(detected.map.userId, "User ID");
+  assert.deepEqual(detected.errors, []);
+});
+
+test("master parser falls back to Mobile No and accepts a blank password", () => {
+  const result = parseMasterRows([
+    {
+      __projectRekhyaSourceRowNumber: 7,
+      Name: "Example Worker",
+      "Mobile No.": "9876543210",
+      "User ID": "",
+      Password: "",
+    },
+  ], inferMasterSheetContext("Biswanath - Krishi Sakhi"));
+  assert.equal(result.records.length, 1);
+  assert.equal(result.records[0].userId, "9876543210");
+  assert.equal(result.records[0].password, "");
+  assert.equal(result.records[0].block, "Biswanath");
+  assert.equal(result.records[0].group, "Krishi Sakhi");
+  assert.match(result.warnings[0], /Password is blank/);
+});
+
+test("SeSTA sheet name supplies its group and block", () => {
+  const context = inferMasterSheetContext("SeSTA - Sakomatha");
+  assert.equal(context.defaultGroup, "SeSTA");
+  assert.equal(context.defaultBlock, "Sakomatha");
+});
+
 test("Excel serial and Indian day-first dates are parsed", () => {
   assert.equal(parseExcelDate(46248).date, "2026-08-14");
   assert.equal(parseExcelDate("31/07/2026").date, "2026-07-31");
@@ -54,7 +86,7 @@ test("master workbook header detection skips title rows", () => {
     ["1", "Example User", "9876543210", "secret", "Sotea", "Krishi Sakhi"],
   ], "master");
   assert.equal(result.rowNumber, 2);
-  assert.equal(result.requiredMatches, 3);
+  assert.equal(result.requiredMatches, 2);
 });
 
 test("portal workbook header detection skips report metadata", () => {
@@ -65,4 +97,17 @@ test("portal workbook header detection skips report metadata", () => {
   ], "portal");
   assert.equal(result.rowNumber, 3);
   assert.equal(result.requiredMatches, 2);
+});
+
+test("workbook reader does not truncate sheets with leading blank rows", async () => {
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet("Vendor - Behali");
+  sheet.getRow(5).values = ["Name", "Mobile No.", "Password"];
+  sheet.getRow(6).values = ["First", "9876543210", "one"];
+  sheet.getRow(7).values = ["Second", "9876543211", "two"];
+  const bytes = await workbook.xlsx.writeBuffer();
+  const file = new File([bytes], "master.xlsx", { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  const imported = await readWorkbookRows(file, "master");
+  assert.equal(imported.sheets[0].headerRowNumber, 5);
+  assert.equal(imported.sheets[0].rows.length, 2);
 });
