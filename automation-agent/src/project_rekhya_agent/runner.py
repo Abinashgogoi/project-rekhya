@@ -29,7 +29,16 @@ class AgentRunner:
             SelectorProfile(self.settings.selector_profile)
         except Exception as error:
             result = PreflightResult(result.device_connected, result.adb_authorized, result.sim_detected, result.official_app_ready, result.internet_ready, result.device_serial, result.problems + (str(error),))
-        self.cloud.heartbeat(device_connected=result.device_connected, adb_authorized=result.adb_authorized, sim_detected=result.sim_detected, official_app_ready=result.official_app_ready, cloud_sync_connected=True, status="idle" if not result.problems else "disconnected", heartbeat_at="now()")
+        self.cloud.heartbeat(
+            device_connected=result.device_connected,
+            adb_authorized=result.adb_authorized,
+            sim_detected=result.sim_detected,
+            official_app_ready=result.official_app_ready,
+            cloud_sync_connected=True,
+            status="idle" if not result.problems else "disconnected",
+            current_stage="Ready" if not result.problems else "Preflight blocked",
+            heartbeat_at="now()",
+        )
         return result
 
     def process_run(self, run_id: str, start_date: date, end_date: date):
