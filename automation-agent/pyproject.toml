@@ -1,0 +1,22 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "project-rekhya-agent"
+version = "0.1.0"
+description = "Authorized physical-Android verification controller for Project Rekhya"
+requires-python = ">=3.11"
+dependencies = [
+  "Appium-Python-Client==6.0.0",
+  "supabase==2.31.0",
+  "fastapi>=0.116,<1",
+  "uvicorn[standard]>=0.35,<1",
+  "pydantic-settings>=2.10,<3",
+]
+
+[project.scripts]
+project-rekhya-agent = "project_rekhya_agent.main:run"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/project_rekhya_agent"]

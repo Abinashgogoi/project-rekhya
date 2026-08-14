@@ -29,6 +29,8 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
+!automation-agent/.env.example
 
 # vercel
 .vercel
@@ -40,3 +42,7 @@ next-env.d.ts
 /.sites-runtime/
 /outputs/
 /work/
+
+# Python generated files
+__pycache__/
+*.py[cod]

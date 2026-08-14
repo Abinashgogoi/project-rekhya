@@ -1,0 +1,110 @@
+begin;
+
+create index app_records_run_id_idx on public.app_records(run_id);
+create index app_records_job_id_idx on public.app_records(job_id);
+create index app_summaries_worker_id_idx on public.app_summaries(worker_id);
+create index evidence_files_run_id_idx on public.evidence_files(run_id);
+create index evidence_files_job_id_idx on public.evidence_files(job_id);
+create index evidence_files_app_record_id_idx on public.evidence_files(app_record_id);
+create index evidence_files_created_by_idx on public.evidence_files(created_by);
+create index import_batches_uploaded_by_idx on public.import_batches(uploaded_by);
+create index import_conflicts_source_file_idx on public.import_conflicts(source_file_id);
+create index import_conflicts_conflicting_file_idx on public.import_conflicts(conflicting_file_id);
+create index import_conflicts_reviewed_by_idx on public.import_conflicts(reviewed_by);
+create index notifications_worker_idx on public.notifications(worker_id);
+create index notifications_job_idx on public.notifications(job_id);
+create index notifications_acknowledged_by_idx on public.notifications(acknowledged_by);
+create index payment_records_updated_by_idx on public.payment_records(updated_by);
+create index reconciliation_rows_worker_idx on public.reconciliation_rows(worker_id);
+create index reconciliation_snapshots_created_by_idx on public.reconciliation_snapshots(created_by);
+create index verification_jobs_worker_idx on public.verification_jobs(worker_id);
+create index verification_runs_started_by_idx on public.verification_runs(started_by);
+create index worker_credentials_source_file_idx on public.worker_credentials(source_file_id);
+create index worker_credentials_updated_by_idx on public.worker_credentials(updated_by);
+create index workers_latest_master_file_idx on public.workers(latest_master_file_id);
+
+drop policy profiles_admin_manage on public.profiles;
+drop policy reference_admin_write on public.blocks;
+drop policy group_admin_write on public.worker_groups;
+drop policy workers_technical_write on public.workers;
+drop policy credentials_technical_write on public.worker_credentials;
+drop policy imports_technical_write on public.import_batches;
+drop policy files_technical_write on public.source_files;
+drop policy portal_technical_write on public.portal_records;
+drop policy conflicts_technical_write on public.import_conflicts;
+drop policy runs_technical_write on public.verification_runs;
+drop policy jobs_technical_write on public.verification_jobs;
+drop policy app_records_technical_write on public.app_records;
+drop policy app_summaries_technical_write on public.app_summaries;
+drop policy evidence_technical_write on public.evidence_files;
+drop policy payments_operational_write on public.payment_records;
+drop policy snapshots_technical_write on public.reconciliation_snapshots;
+drop policy rows_technical_write on public.reconciliation_rows;
+drop policy notifications_technical_write on public.notifications;
+drop policy agent_technical_write on public.agent_status;
+
+create policy profiles_admin_insert on public.profiles for insert to authenticated with check (private.current_user_role()='admin');
+create policy profiles_admin_update on public.profiles for update to authenticated using (private.current_user_role()='admin') with check (private.current_user_role()='admin');
+create policy profiles_admin_delete on public.profiles for delete to authenticated using (private.current_user_role()='admin');
+
+create policy blocks_technical_insert on public.blocks for insert to authenticated with check (private.current_user_role() in ('admin','technical_officer'));
+create policy blocks_technical_update on public.blocks for update to authenticated using (private.current_user_role() in ('admin','technical_officer')) with check (private.current_user_role() in ('admin','technical_officer'));
+create policy blocks_technical_delete on public.blocks for delete to authenticated using (private.current_user_role() in ('admin','technical_officer'));
+create policy groups_technical_insert on public.worker_groups for insert to authenticated with check (private.current_user_role() in ('admin','technical_officer'));
+create policy groups_technical_update on public.worker_groups for update to authenticated using (private.current_user_role() in ('admin','technical_officer')) with check (private.current_user_role() in ('admin','technical_officer'));
+create policy groups_technical_delete on public.worker_groups for delete to authenticated using (private.current_user_role() in ('admin','technical_officer'));
+
+create policy workers_technical_insert on public.workers for insert to authenticated with check (private.current_user_role() in ('admin','technical_officer'));
+create policy workers_technical_update on public.workers for update to authenticated using (private.current_user_role() in ('admin','technical_officer')) with check (private.current_user_role() in ('admin','technical_officer'));
+create policy workers_technical_delete on public.workers for delete to authenticated using (private.current_user_role() in ('admin','technical_officer'));
+create policy credentials_technical_insert on public.worker_credentials for insert to authenticated with check (private.current_user_role() in ('admin','technical_officer'));
+create policy credentials_technical_update on public.worker_credentials for update to authenticated using (private.current_user_role() in ('admin','technical_officer')) with check (private.current_user_role() in ('admin','technical_officer'));
+create policy credentials_technical_delete on public.worker_credentials for delete to authenticated using (private.current_user_role() in ('admin','technical_officer'));
+
+create policy imports_technical_insert on public.import_batches for insert to authenticated with check (private.current_user_role() in ('admin','technical_officer'));
+create policy imports_technical_update on public.import_batches for update to authenticated using (private.current_user_role() in ('admin','technical_officer')) with check (private.current_user_role() in ('admin','technical_officer'));
+create policy imports_technical_delete on public.import_batches for delete to authenticated using (private.current_user_role() in ('admin','technical_officer'));
+create policy files_technical_insert on public.source_files for insert to authenticated with check (private.current_user_role() in ('admin','technical_officer'));
+create policy files_technical_update on public.source_files for update to authenticated using (private.current_user_role() in ('admin','technical_officer')) with check (private.current_user_role() in ('admin','technical_officer'));
+create policy files_technical_delete on public.source_files for delete to authenticated using (private.current_user_role() in ('admin','technical_officer'));
+create policy portal_technical_insert on public.portal_records for insert to authenticated with check (private.current_user_role() in ('admin','technical_officer'));
+create policy portal_technical_update on public.portal_records for update to authenticated using (private.current_user_role() in ('admin','technical_officer')) with check (private.current_user_role() in ('admin','technical_officer'));
+create policy portal_technical_delete on public.portal_records for delete to authenticated using (private.current_user_role() in ('admin','technical_officer'));
+create policy conflicts_technical_insert on public.import_conflicts for insert to authenticated with check (private.current_user_role() in ('admin','technical_officer'));
+create policy conflicts_technical_update on public.import_conflicts for update to authenticated using (private.current_user_role() in ('admin','technical_officer')) with check (private.current_user_role() in ('admin','technical_officer'));
+create policy conflicts_technical_delete on public.import_conflicts for delete to authenticated using (private.current_user_role() in ('admin','technical_officer'));
+
+create policy runs_technical_insert on public.verification_runs for insert to authenticated with check (private.current_user_role() in ('admin','technical_officer'));
+create policy runs_technical_update on public.verification_runs for update to authenticated using (private.current_user_role() in ('admin','technical_officer')) with check (private.current_user_role() in ('admin','technical_officer'));
+create policy runs_technical_delete on public.verification_runs for delete to authenticated using (private.current_user_role() in ('admin','technical_officer'));
+create policy jobs_technical_insert on public.verification_jobs for insert to authenticated with check (private.current_user_role() in ('admin','technical_officer'));
+create policy jobs_technical_update on public.verification_jobs for update to authenticated using (private.current_user_role() in ('admin','technical_officer')) with check (private.current_user_role() in ('admin','technical_officer'));
+create policy jobs_technical_delete on public.verification_jobs for delete to authenticated using (private.current_user_role() in ('admin','technical_officer'));
+create policy app_records_technical_insert on public.app_records for insert to authenticated with check (private.current_user_role() in ('admin','technical_officer'));
+create policy app_records_technical_update on public.app_records for update to authenticated using (private.current_user_role() in ('admin','technical_officer')) with check (private.current_user_role() in ('admin','technical_officer'));
+create policy app_records_technical_delete on public.app_records for delete to authenticated using (private.current_user_role() in ('admin','technical_officer'));
+create policy app_summaries_technical_insert on public.app_summaries for insert to authenticated with check (private.current_user_role() in ('admin','technical_officer'));
+create policy app_summaries_technical_update on public.app_summaries for update to authenticated using (private.current_user_role() in ('admin','technical_officer')) with check (private.current_user_role() in ('admin','technical_officer'));
+create policy app_summaries_technical_delete on public.app_summaries for delete to authenticated using (private.current_user_role() in ('admin','technical_officer'));
+
+create policy evidence_technical_insert on public.evidence_files for insert to authenticated with check (private.current_user_role() in ('admin','technical_officer'));
+create policy evidence_technical_update on public.evidence_files for update to authenticated using (private.current_user_role() in ('admin','technical_officer')) with check (private.current_user_role() in ('admin','technical_officer'));
+create policy evidence_technical_delete on public.evidence_files for delete to authenticated using (private.current_user_role() in ('admin','technical_officer'));
+create policy payments_operational_insert on public.payment_records for insert to authenticated with check (private.current_user_role() in ('admin','technical_officer','field_officer') and updated_by=(select auth.uid()));
+create policy payments_operational_update on public.payment_records for update to authenticated using (private.current_user_role() in ('admin','technical_officer','field_officer')) with check (private.current_user_role() in ('admin','technical_officer','field_officer') and updated_by=(select auth.uid()));
+create policy payments_technical_delete on public.payment_records for delete to authenticated using (private.current_user_role() in ('admin','technical_officer'));
+
+create policy snapshots_technical_insert on public.reconciliation_snapshots for insert to authenticated with check (private.current_user_role() in ('admin','technical_officer'));
+create policy snapshots_technical_update on public.reconciliation_snapshots for update to authenticated using (private.current_user_role() in ('admin','technical_officer')) with check (private.current_user_role() in ('admin','technical_officer'));
+create policy snapshots_technical_delete on public.reconciliation_snapshots for delete to authenticated using (private.current_user_role() in ('admin','technical_officer'));
+create policy rows_technical_insert on public.reconciliation_rows for insert to authenticated with check (private.current_user_role() in ('admin','technical_officer'));
+create policy rows_technical_update on public.reconciliation_rows for update to authenticated using (private.current_user_role() in ('admin','technical_officer')) with check (private.current_user_role() in ('admin','technical_officer'));
+create policy rows_technical_delete on public.reconciliation_rows for delete to authenticated using (private.current_user_role() in ('admin','technical_officer'));
+create policy notifications_technical_insert on public.notifications for insert to authenticated with check (private.current_user_role() in ('admin','technical_officer'));
+create policy notifications_technical_update on public.notifications for update to authenticated using (private.current_user_role() in ('admin','technical_officer')) with check (private.current_user_role() in ('admin','technical_officer'));
+create policy notifications_technical_delete on public.notifications for delete to authenticated using (private.current_user_role() in ('admin','technical_officer'));
+create policy agent_technical_insert on public.agent_status for insert to authenticated with check (private.current_user_role() in ('admin','technical_officer'));
+create policy agent_technical_update on public.agent_status for update to authenticated using (private.current_user_role() in ('admin','technical_officer')) with check (private.current_user_role() in ('admin','technical_officer'));
+create policy agent_technical_delete on public.agent_status for delete to authenticated using (private.current_user_role() in ('admin','technical_officer'));
+
+commit;
