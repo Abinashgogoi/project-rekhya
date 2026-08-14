@@ -11,6 +11,13 @@ export type ReconciliationRow = {
 
 export type Profile = { id: string; display_name: string | null; role: OfficerRole; active: boolean };
 
+export type PendingCredential = {
+  worker_id: string;
+  user_id: string;
+  name: string;
+  updated_at: string | null;
+};
+
 export type TrashWorker = {
   worker_id: string;
   name: string;

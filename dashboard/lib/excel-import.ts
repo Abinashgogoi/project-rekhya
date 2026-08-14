@@ -47,7 +47,6 @@ function cellValue(value: ExcelJS.CellValue): unknown {
   if ("result" in value) return cellValue(value.result as ExcelJS.CellValue);
   if ("richText" in value) return value.richText.map((item) => item.text).join("");
   if ("text" in value) return value.text;
-  if ("hyperlink" in value) return value.text;
   return String(value);
 }
 

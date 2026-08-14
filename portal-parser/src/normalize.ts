@@ -1,8 +1,13 @@
 export function normalizeUserId(value: unknown) {
-  if (typeof value === "number" && Number.isFinite(value)) return Number.isInteger(value) ? String(value) : "";
+  if (typeof value === "number" && Number.isFinite(value)) return Number.isSafeInteger(value) ? String(value) : "";
   const raw = String(value ?? "").trim();
   if (!raw) return "";
-  return raw.replace(/\.0$/, "").replace(/\s+/g, "");
+  const compact = raw.replace(/\s+/g, "").replace(/\.0$/, "");
+  if (/^[+-]?\d+(?:\.\d+)?e[+-]?\d+$/i.test(compact)) {
+    const expanded = Number(compact);
+    return Number.isSafeInteger(expanded) ? String(expanded) : "";
+  }
+  return compact;
 }
 
 function validDate(year: number, month: number, day: number) {

@@ -39,7 +39,7 @@ function matchingHeaders(headers: string[], aliases: readonly string[]) {
 
 export function parseMasterRows(rows: Array<Record<string, unknown>>, context: MasterSheetContext = {}) {
   const headers = rows.length ? Object.keys(rows[0]) : [];
-  const detected = detectHeaderMap(headers, masterHeaders, ["name", "userId", "password"]);
+  const detected = detectHeaderMap<keyof typeof masterHeaders>(headers, masterHeaders, ["name", "userId", "password"]);
   const structuralErrors = detected.errors.filter((error) => !error.endsWith(": password"));
   if (structuralErrors.length) return { records: [] as MasterRecordCandidate[], warnings: [], errors: structuralErrors, headerMap: detected.map };
   const records: MasterRecordCandidate[] = [];
@@ -50,14 +50,16 @@ export function parseMasterRows(rows: Array<Record<string, unknown>>, context: M
   const passwordHeaders = matchingHeaders(headers, masterHeaders.password);
   rows.forEach((row, index) => {
     const rowNumber = Number(row.__projectRekhyaSourceRowNumber) || index + 2;
-    const name = String(row[detected.map.name!] ?? "").trim();
+    const sourceName = String(row[detected.map.name!] ?? "").trim();
     const userId = userIdHeaders.map((header) => normalizeUserId(row[header])).find(Boolean) ?? "";
     const password = passwordHeaders.map((header) => String(row[header] ?? "").trim()).find(Boolean) ?? "";
     const location = context.worksheetName ? `${context.worksheetName} row ${rowNumber}` : `Row ${rowNumber}`;
-    if (!name || !userId) { errors.push(`${location}: Name and User ID/Mobile are required; row skipped.`); return; }
+    if (!userId) { errors.push(`${location}: User ID/Mobile is required; row skipped.`); return; }
+    const name = sourceName || "Name pending";
     const previous = seen.get(userId);
     if (previous) { errors.push(`${location}: User ID ${userId} duplicates row ${previous}; duplicate row skipped.`); return; }
     seen.set(userId, rowNumber);
+    if (!sourceName) warnings.push(`${location}: Name is blank; User ID remains in scope as 'Name pending'.`);
     if (!password) warnings.push(`${location}: Password is blank; User ID will remain in scope but Android verification will stay pending until a password is added.`);
     const block = detected.map.block ? String(row[detected.map.block] ?? "").trim() || context.defaultBlock || null : context.defaultBlock || null;
     const groupRaw = detected.map.group ? String(row[detected.map.group] ?? "").trim().toLowerCase() : "";

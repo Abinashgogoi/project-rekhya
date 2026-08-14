@@ -50,4 +50,7 @@ test("bundles persistent upload feedback and exact-location restore guidance", a
   assert.match(source, /Exact-location restore/);
   assert.match(source, /Uploaded source files/);
   assert.match(source, /Upload Portal Folder/);
+  assert.match(source, /Pending Passwords/);
+  assert.match(source, /does not try another worker/);
+  assert.match(source, /Password is pending\. Add its confirmed value/);
 });

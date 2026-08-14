@@ -18,7 +18,7 @@ export type PortalRecordCandidate = {
 
 export function parsePortalRows(rows: Array<Record<string, unknown>>, inScopeUserIds: ReadonlySet<string>) {
   const headers = rows.length ? Object.keys(rows[0]) : [];
-  const detected = detectHeaderMap(headers, portalHeaders, ["userId", "transactionDate"]);
+  const detected = detectHeaderMap<keyof typeof portalHeaders>(headers, portalHeaders, ["userId", "transactionDate"]);
   if (detected.errors.length) return { records: [] as PortalRecordCandidate[], ignoredOutOfScope: 0, warnings: [], errors: detected.errors, headerMap: detected.map };
   const map = detected.map;
   const records: PortalRecordCandidate[] = [];

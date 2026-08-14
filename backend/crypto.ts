@@ -1,9 +1,17 @@
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
-function hexToBytes(hex: string) {
-  if (!/^[0-9a-f]{64}$/i.test(hex)) throw new Error("Credential encryption key is not configured correctly.");
-  return new Uint8Array(hex.match(/.{2}/g)!.map((value) => Number.parseInt(value, 16)));
+function credentialKeyBytes(value: string) {
+  if (/^[0-9a-f]{64}$/i.test(value)) {
+    return new Uint8Array(value.match(/.{2}/g)!.map((part) => Number.parseInt(part, 16)));
+  }
+  try {
+    const decoded = base64ToBytes(value);
+    if (decoded.byteLength === 32) return decoded;
+  } catch {
+    // The shared error below intentionally avoids exposing any secret details.
+  }
+  throw new Error("Credential encryption key is not configured correctly.");
 }
 
 function bytesToBase64(bytes: Uint8Array) {
@@ -20,7 +28,7 @@ function base64ToBytes(value: string) {
 async function credentialKey() {
   const secret = process.env.CREDENTIAL_ENCRYPTION_KEY;
   if (!secret) throw new Error("Credential encryption is unavailable.");
-  return crypto.subtle.importKey("raw", hexToBytes(secret), "AES-GCM", false, ["encrypt", "decrypt"]);
+  return crypto.subtle.importKey("raw", credentialKeyBytes(secret), "AES-GCM", false, ["encrypt", "decrypt"]);
 }
 
 export async function encryptCredential(plaintext: string) {

@@ -62,6 +62,24 @@ test("master parser falls back to Mobile No and accepts a blank password", () =>
   assert.match(result.warnings[0], /Password is blank/);
 });
 
+test("blank names stay in scope when a User ID or Mobile No exists", () => {
+  const result = parseMasterRows([{
+    __projectRekhyaSourceRowNumber: 41,
+    Name: "",
+    "Mobile No.": 9365703416,
+    Password: "",
+  }], inferMasterSheetContext("Behali - Krishi Sakhi"));
+  assert.equal(result.records.length, 1);
+  assert.equal(result.records[0].name, "Name pending");
+  assert.equal(result.records[0].userId, "9365703416");
+  assert.ok(result.warnings.some((message) => message.includes("Name is blank")));
+});
+
+test("scientific-notation IDs are expanded without changing the integer", () => {
+  const result = parseMasterRows([{ Name: "Scientific ID", "Mobile No.": "9.365703416E+9", Password: "secret" }]);
+  assert.equal(result.records[0].userId, "9365703416");
+});
+
 test("SeSTA sheet name supplies its group and block", () => {
   const context = inferMasterSheetContext("SeSTA - Sakomatha");
   assert.equal(context.defaultGroup, "SeSTA");
