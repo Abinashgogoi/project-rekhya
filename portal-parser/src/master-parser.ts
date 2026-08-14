@@ -14,6 +14,76 @@ export type MasterRecordCandidate = {
   group: "Krishi Sakhi" | "Vendor" | "SeSTA" | null; rawFields: Record<string, unknown>;
 };
 
+export type MasterDuplicateDetail = {
+  userId: string;
+  sources: Array<{
+    sheet: string;
+    row: number;
+    name: string;
+    block: string | null;
+    group: MasterRecordCandidate["group"];
+    passwordPresent: boolean;
+  }>;
+  credentialSourceSheet: string | null;
+};
+
+const masterIdentityOverrides: Record<string, {
+  name: string;
+  block: string;
+  group: MasterRecordCandidate["group"];
+  preferredCredentialSheet?: string;
+}> = {
+  "8822798435": {
+    name: "Latumoni Hazarika",
+    block: "Biswanath",
+    group: "Krishi Sakhi",
+    preferredCredentialSheet: "Vendor - Pabhoi",
+  },
+};
+
+function sourceSheet(record: MasterRecordCandidate) {
+  return String(record.rawFields.__projectRekhyaWorksheetName ?? "Source sheet not recorded");
+}
+
+export function mergeMasterRecordsByUserId(records: MasterRecordCandidate[]) {
+  const grouped = new Map<string, MasterRecordCandidate[]>();
+  for (const record of records) grouped.set(record.userId, [...(grouped.get(record.userId) ?? []), record]);
+  const duplicates: MasterDuplicateDetail[] = [];
+  const mergedRecords = [...grouped.entries()].map(([userId, matches]) => {
+    const override = masterIdentityOverrides[userId];
+    const preferredCredential = override?.preferredCredentialSheet
+      ? matches.find((record) => sourceSheet(record) === override.preferredCredentialSheet && record.password)
+      : undefined;
+    const credentialRecord = preferredCredential ?? matches.find((record) => record.password) ?? null;
+    if (matches.length > 1) {
+      duplicates.push({
+        userId,
+        sources: matches.map((record) => ({
+          sheet: sourceSheet(record),
+          row: record.sourceRowNumber,
+          name: record.name,
+          block: record.block,
+          group: record.group,
+          passwordPresent: Boolean(record.password),
+        })),
+        credentialSourceSheet: credentialRecord ? sourceSheet(credentialRecord) : null,
+      });
+    }
+    const primary = matches[0];
+    return {
+      ...primary,
+      ...(override ? { name: override.name, block: override.block, group: override.group } : {}),
+      password: credentialRecord?.password ?? "",
+      rawFields: {
+        ...primary.rawFields,
+        ...(credentialRecord ? { __projectRekhyaCredentialSourceWorksheet: sourceSheet(credentialRecord) } : {}),
+        ...(override ? { __projectRekhyaIdentityOverride: `${override.block} / ${override.group}` } : {}),
+      },
+    };
+  });
+  return { records: mergedRecords, duplicates };
+}
+
 export type MasterSheetContext = {
   worksheetName?: string;
   defaultBlock?: string | null;

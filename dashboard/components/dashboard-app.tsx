@@ -446,25 +446,22 @@ function OperationalDashboard({ session, profile, developmentShell }: { session:
   async function importMaster(file: File) {
     setActiveView("imports"); setImportBusy(true); setImportStatus(`Reading and validating ${file.name} before import…`); setError(null);
     try {
-      const [{ readWorkbookRows }, { inferMasterSheetContext, parseMasterRows }] = await Promise.all([import("../lib/excel-import"), import("../../portal-parser/src/master-parser")]);
+      const [{ readWorkbookRows }, { inferMasterSheetContext, mergeMasterRecordsByUserId, parseMasterRows }] = await Promise.all([import("../lib/excel-import"), import("../../portal-parser/src/master-parser")]);
       const workbook = await readWorkbookRows(file, "master");
       const parsedSheets = workbook.sheets.map((sheet) => ({ sheet, parsed: parseMasterRows(sheet.rows, inferMasterSheetContext(sheet.worksheetName)) }));
       const validationMessages = parsedSheets.flatMap(({ parsed }) => [...parsed.errors, ...parsed.warnings]);
-      const uniqueRecords = new Map<string, ReturnType<typeof parseMasterRows>["records"][number]>();
-      let duplicateUserIds = 0;
-      for (const { parsed } of parsedSheets) {
-        for (const record of parsed.records) {
-          if (uniqueRecords.has(record.userId)) { duplicateUserIds += 1; continue; }
-          uniqueRecords.set(record.userId, record);
-        }
-      }
-      const records = [...uniqueRecords.values()];
+      const merged = mergeMasterRecordsByUserId(parsedSheets.flatMap(({ parsed }) => parsed.records));
+      const records = merged.records;
+      const duplicateUserIds = merged.duplicates.reduce((sum, duplicate) => sum + duplicate.sources.length - 1, 0);
       if (!records.length) throw new Error(validationMessages.slice(0, 8).join(" ") || "No valid Master User ID rows were found.");
       const missingPasswords = records.filter((record) => !record.password).length;
       const headerMap = Object.fromEntries(parsedSheets.map(({ sheet, parsed }) => [
         sheet.worksheetName,
         `row ${sheet.headerRowNumber}: ${Object.entries(parsed.headerMap).map(([field, header]) => `${field}←${header}`).join(", ")}`,
-      ]));
+      ]).concat(merged.duplicates.map((duplicate) => [
+        `Duplicate User ID ${duplicate.userId}`,
+        `${duplicate.sources.map((source) => `${source.name} — ${source.sheet} row ${source.row}`).join("; ")}. Reporting identity: ${records.find((record) => record.userId === duplicate.userId)?.block ?? "not set"} / ${records.find((record) => record.userId === duplicate.userId)?.group ?? "not set"}; credential source: ${duplicate.credentialSourceSheet ?? "password missing"}.`,
+      ])));
       setPreparedImports([{
         key: `master:${workbook.sha256}`,
         sourceType: "master",

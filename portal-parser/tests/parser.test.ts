@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import ExcelJS from "exceljs";
 import { detectHeaderMap } from "../src/header-map";
-import { inferMasterSheetContext, masterHeaders, parseMasterRows } from "../src/master-parser";
+import { inferMasterSheetContext, masterHeaders, mergeMasterRecordsByUserId, parseMasterRows } from "../src/master-parser";
 import { parsePortalRows } from "../src/parser";
 import { parseExcelDate } from "../src/normalize";
 import { findLikelyHeaderRow, readWorkbookRows } from "../../dashboard/lib/excel-import";
@@ -78,6 +78,30 @@ test("blank names stay in scope when a User ID or Mobile No exists", () => {
 test("scientific-notation IDs are expanded without changing the integer", () => {
   const result = parseMasterRows([{ Name: "Scientific ID", "Mobile No.": "9.365703416E+9", Password: "secret" }]);
   assert.equal(result.records[0].userId, "9365703416");
+});
+
+test("Latumoni reports under Biswanath Krishi Sakhi while a duplicate credential can be merged", () => {
+  const krishi = parseMasterRows([{
+    __projectRekhyaWorksheetName: "Biswanath - Krishi Sakhi",
+    __projectRekhyaSourceRowNumber: 28,
+    Name: "Latumoni Hazarika",
+    "Mobile No.": "8822798435",
+    Password: "",
+  }], inferMasterSheetContext("Biswanath - Krishi Sakhi")).records[0];
+  const vendor = parseMasterRows([{
+    __projectRekhyaWorksheetName: "Vendor - Pabhoi",
+    __projectRekhyaSourceRowNumber: 8,
+    Name: "Latumoni Borah",
+    "Mobile No.": "8822798435",
+    Password: "authorized-vendor-credential",
+  }], inferMasterSheetContext("Vendor - Pabhoi")).records[0];
+  const merged = mergeMasterRecordsByUserId([krishi, vendor]);
+  assert.equal(merged.records.length, 1);
+  assert.equal(merged.records[0].name, "Latumoni Hazarika");
+  assert.equal(merged.records[0].block, "Biswanath");
+  assert.equal(merged.records[0].group, "Krishi Sakhi");
+  assert.equal(merged.records[0].password, "authorized-vendor-credential");
+  assert.equal(merged.duplicates[0].credentialSourceSheet, "Vendor - Pabhoi");
 });
 
 test("SeSTA sheet name supplies its group and block", () => {
