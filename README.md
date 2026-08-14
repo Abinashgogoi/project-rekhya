@@ -33,3 +33,5 @@ python -m compileall -q automation-agent/src
 ```
 
 The Android automation cannot be fully validated without the authorized physical phone, active SIM 1, official app, and a calibrated selector profile. See `automation-agent/README.md` for that controlled hardware milestone.
+
+Direct Cloudflare production deployment is documented in `deployment/cloudflare.md`. The canonical Cloudflare Worker name is `project-rekhya`.
