@@ -20,6 +20,14 @@ class RuleTests(TestCase):
         self.assertEqual(result.pre_cutoff_count, 1)
         self.assertEqual(result.app_entry, 1)
 
+    def test_finalized_end_date_is_inclusive_and_later_dates_are_excluded(self):
+        result = classify_records(
+            [self.record(100, 13), self.record(100, 14), self.record(350, 15)],
+            date(2026, 8, 1),
+            date(2026, 8, 13),
+        )
+        self.assertEqual((result.normal_total, result.high_total, result.app_entry), (1, 0, 1))
+
     def test_duplicate_candidates_are_not_deleted(self):
         records = [self.record(350, 3), self.record(350, 3)]
         self.assertEqual(len(flag_duplicate_candidates(records)), 2)

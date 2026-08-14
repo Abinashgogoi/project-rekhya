@@ -10,3 +10,20 @@ export type ReconciliationRow = {
 };
 
 export type Profile = { id: string; display_name: string | null; role: OfficerRole; active: boolean };
+
+export type TrashWorker = {
+  worker_id: string;
+  name: string;
+  user_id: string;
+  block: string | null;
+  group_name: string | null;
+  deleted_at: string;
+  retention_until: string;
+  deletion_reason: string | null;
+  deleted_by_name: string | null;
+  portal_count: number;
+  app_count: number;
+  evidence_count: number;
+  payment_count: number;
+  verification_count: number;
+};
