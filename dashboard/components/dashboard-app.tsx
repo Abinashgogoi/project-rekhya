@@ -27,6 +27,7 @@ type PreparedImport = {
   fileName: string;
   fileSize: number;
   worksheetName: string;
+  headerRowNumber: number;
   rowCount: number;
   acceptedRows: number;
   ignoredOutOfScope: number;
@@ -405,7 +406,7 @@ function OperationalDashboard({ session, profile, developmentShell }: { session:
     setActiveView("imports"); setImportBusy(true); setImportStatus(`Reading and validating ${file.name} before import…`); setError(null);
     try {
       const [{ readWorkbookRows }, { parseMasterRows }] = await Promise.all([import("../lib/excel-import"), import("../../portal-parser/src/master-parser")]);
-      const workbook = await readWorkbookRows(file);
+      const workbook = await readWorkbookRows(file, "master");
       const parsed = parseMasterRows(workbook.rows);
       if (parsed.errors.length) throw new Error(parsed.errors.slice(0, 8).join(" "));
       setPreparedImports([{
@@ -414,13 +415,14 @@ function OperationalDashboard({ session, profile, developmentShell }: { session:
         fileName: file.name,
         fileSize: file.size,
         worksheetName: workbook.worksheetName,
+        headerRowNumber: workbook.headerRowNumber,
         rowCount: workbook.rowCount,
         acceptedRows: parsed.records.length,
         ignoredOutOfScope: 0,
         warningCount: parsed.warnings.length,
         detectedStartDate: null,
         detectedEndDate: null,
-        headerMap: parsed.headerMap,
+        headerMap: { ...parsed.headerMap, headerRow: String(workbook.headerRowNumber) },
         sampleUserIds: parsed.records.slice(0, 5).map((record) => record.userId),
         payload: { sourceLabel: file.name, originalFilename: file.name, sha256: workbook.sha256, mimeType: workbook.mimeType, rowCount: workbook.rowCount, headerMap: parsed.headerMap, records: parsed.records },
       }]);
@@ -457,7 +459,7 @@ function OperationalDashboard({ session, profile, developmentShell }: { session:
       const file = files[index];
       setImportStatus(`Validating portal file ${index + 1} of ${files.length}: ${file.name}`);
       try {
-        const workbook = await readWorkbookRows(file);
+        const workbook = await readWorkbookRows(file, "portal");
         const parsed = parsePortalRows(workbook.rows, scope);
         if (parsed.errors.length) throw new Error(parsed.errors.slice(0, 8).join(" "));
         if (!parsed.records.length) throw new Error("No in-scope transaction rows were found.");
@@ -468,13 +470,14 @@ function OperationalDashboard({ session, profile, developmentShell }: { session:
           fileName: file.name,
           fileSize: file.size,
           worksheetName: workbook.worksheetName,
+          headerRowNumber: workbook.headerRowNumber,
           rowCount: workbook.rowCount,
           acceptedRows: parsed.records.length,
           ignoredOutOfScope: parsed.ignoredOutOfScope,
           warningCount: parsed.warnings.length + parsed.records.filter((record) => record.possibleDuplicateWithinFile).length,
           detectedStartDate: dates[0] ?? null,
           detectedEndDate: dates.at(-1) ?? null,
-          headerMap: parsed.headerMap,
+          headerMap: { ...parsed.headerMap, headerRow: String(workbook.headerRowNumber) },
           sampleUserIds: Array.from(new Set(parsed.records.slice(0, 20).map((record) => record.userId))).slice(0, 5),
           payload: { sourceLabel: file.name, originalFilename: file.name, sha256: workbook.sha256, mimeType: workbook.mimeType, rowCount: workbook.rowCount, ignoredOutOfScope: parsed.ignoredOutOfScope, headerMap: parsed.headerMap, records: parsed.records },
         });

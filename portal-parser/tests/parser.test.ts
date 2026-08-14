@@ -3,6 +3,7 @@ import test from "node:test";
 import { parseMasterRows } from "../src/master-parser";
 import { parsePortalRows } from "../src/parser";
 import { parseExcelDate } from "../src/normalize";
+import { findLikelyHeaderRow } from "../../dashboard/lib/excel-import";
 
 test("portal parser includes only master-scoped User IDs", () => {
   const result = parsePortalRows([
@@ -44,4 +45,24 @@ test("missing required columns fail without guessing", () => {
   const result = parsePortalRows([{ Name: "A", Amount: 100 }], new Set(["1"]));
   assert.equal(result.records.length, 0);
   assert.ok(result.errors.some((message) => message.includes("Required column not found")));
+});
+
+test("master workbook header detection skips title rows", () => {
+  const result = findLikelyHeaderRow([
+    ["Combined Master ID Password – Sotea Krishi Sakhi"],
+    ["Sl No.", "Name", "User ID", "Password", "Block", "Group"],
+    ["1", "Example User", "9876543210", "secret", "Sotea", "Krishi Sakhi"],
+  ], "master");
+  assert.equal(result.rowNumber, 2);
+  assert.equal(result.requiredMatches, 3);
+});
+
+test("portal workbook header detection skips report metadata", () => {
+  const result = findLikelyHeaderRow([
+    ["Portal Transaction Report"],
+    ["Generated on", "15/08/2026"],
+    ["Mobile No.", "Transaction Date", "Amount", "Policy ID"],
+  ], "portal");
+  assert.equal(result.rowNumber, 3);
+  assert.equal(result.requiredMatches, 2);
 });
