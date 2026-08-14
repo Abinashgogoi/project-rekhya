@@ -43,7 +43,21 @@ def main():
     from appium import webdriver
     from appium.options.android import UiAutomator2Options
     settings = Settings()
-    options = UiAutomator2Options().load_capabilities({"platformName": "Android", "automationName": "UiAutomator2", "appium:deviceName": settings.device_serial or "Android", "appium:udid": settings.device_serial, "appium:appPackage": settings.android_package, "appium:appActivity": settings.android_activity, "appium:noReset": True})
+    options = UiAutomator2Options().load_capabilities({
+        "platformName": "Android",
+        "automationName": "UiAutomator2",
+        "appium:deviceName": settings.device_serial or "Android",
+        "appium:udid": settings.device_serial,
+        "appium:appPackage": settings.android_package,
+        "appium:appActivity": settings.android_activity,
+        "appium:noReset": True,
+        # Physical calibration requires the operator to navigate between several
+        # OEM settings and app screens. Keep the session alive while they do so.
+        "appium:newCommandTimeout": 3600,
+        # Realme Phone Manager can hold USB APK installs for manual review.
+        "appium:uiautomator2ServerInstallTimeout": 120000,
+        "appium:adbExecTimeout": 120000,
+    })
     driver = webdriver.Remote(settings.appium_url, options=options)
     selected: dict[str, list[dict[str, str]]] = {}
     try:
@@ -58,7 +72,11 @@ def main():
             picked = dict(available[choice - 1]); picked.pop("label", None)
             selected[key] = [picked]
     finally:
-        driver.quit()
+        try:
+            driver.quit()
+        except Exception:
+            # The device or Appium server may already have ended the session.
+            pass
     payload = {"project": "project-rekhya", "schema_version": 1, "selectors": selected, "regions": {}}
     Path(settings.selector_profile).write_text(json.dumps(payload, indent=2), encoding="utf-8")
     print(f"Saved Project Rekhya selector profile to {settings.selector_profile}")
