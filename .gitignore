@@ -55,3 +55,6 @@ __pycache__/
 
 # Python virtual environments
 /automation-agent/.venv/
+
+# Local automation patch backups
+/automation-backup-*/
