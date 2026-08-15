@@ -15,6 +15,10 @@ class ManualReviewRequired(RuntimeError):
     pass
 
 
+class AutomationSetupError(RuntimeError):
+    """A systematic phone/app navigation failure that must stop the batch."""
+
+
 class AppiumFlow:
     def __init__(self, appium_url: str, package: str, activity: str, device: AdbDevice, profile: SelectorProfile, evidence: EvidenceStore):
         from appium import webdriver
@@ -47,6 +51,10 @@ class AppiumFlow:
     def _text(self, key: str) -> str:
         return self._find(self.profile.locators(key)).text.strip()
 
+    @staticmethod
+    def _digits(value: str) -> str:
+        return "".join(character for character in value if character.isdigit())
+
     def set_sim_number(self, expected_user_id: str):
         self.device.start_settings()
         self._find(self.profile.locators("sim_number_open"), timeout=20).click()
@@ -62,10 +70,21 @@ class AppiumFlow:
         result = JobResult(expected_user_id=expected_user_id)
         self.set_sim_number(expected_user_id)
         self.driver.activate_app(self.package)
-        self._find(self.profile.locators("google_phone_number_choice"), timeout=20).click()
-        selected = self._text("login_mobile_value").replace(" ", "")
-        if selected != expected_user_id:
-            raise ManualReviewRequired("Google phone-number selection does not match the expected User ID")
+        # The official app does not always open Google's phone-number chooser
+        # automatically. Tap the mobile field first, then select the number.
+        try:
+            try:
+                phone_choice = self._find(self.profile.locators("google_phone_number_choice"), timeout=2)
+            except Exception:
+                self._find(self.profile.locators("login_mobile_value"), timeout=20).click()
+                phone_choice = self._find(self.profile.locators("google_phone_number_choice"), timeout=20)
+            phone_choice.click()
+            sleep(1)
+            selected = self._digits(self._text("login_mobile_value"))[-10:]
+        except Exception as error:
+            raise AutomationSetupError("Phone-number picker could not be opened or selected; batch stopped before another User ID") from error
+        if selected != self._digits(expected_user_id)[-10:]:
+            raise AutomationSetupError("Selected phone number does not match the expected User ID; batch stopped before another User ID")
         password_field = self._find(self.profile.locators("login_password")); password_field.clear(); password_field.send_keys(password)
         self._find(self.profile.locators("login_button")).click()
         sleep(2)

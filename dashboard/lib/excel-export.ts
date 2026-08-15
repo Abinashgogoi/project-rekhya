@@ -5,7 +5,8 @@ export type ExportColumn =
   | "serial_no" | "name" | "user_id" | "password" | "block" | "group_name"
   | "portal_entry" | "normal_total" | "app_entry" | "high_entry"
   | "krishi_sakhi_received" | "krishi_sakhi_pending"
-  | "vendor_received" | "vendor_pending" | "verification_status" | "evidence_count";
+  | "vendor_received" | "vendor_pending" | "sesta_received" | "sesta_pending"
+  | "verification_status" | "evidence_count";
 
 export const exportColumnLabels: Record<ExportColumn, string> = {
   serial_no: "Sl No.", name: "Name", user_id: "User ID", password: "Password",
@@ -14,13 +15,15 @@ export const exportColumnLabels: Record<ExportColumn, string> = {
   krishi_sakhi_received: "Krishi Sakhi Amount Received",
   krishi_sakhi_pending: "Krishi Sakhi Pending Amount",
   vendor_received: "Vendor Amount Received", vendor_pending: "Vendor Pending Amount",
+  sesta_received: "SeSTA Amount Received", sesta_pending: "SeSTA Pending Amount",
   verification_status: "Verification Status", evidence_count: "Evidence Count",
 };
 
 export const fullExportColumns = Object.keys(exportColumnLabels) as ExportColumn[];
 export const combinedExportColumns: ExportColumn[] = [
   "serial_no", "name", "user_id", "password", "portal_entry", "app_entry", "high_entry",
-  "krishi_sakhi_received", "krishi_sakhi_pending", "vendor_received", "vendor_pending", "evidence_count",
+  "krishi_sakhi_received", "krishi_sakhi_pending", "vendor_received", "vendor_pending",
+  "sesta_received", "sesta_pending", "evidence_count",
 ];
 
 function valueFor(row: ReconciliationRow, column: ExportColumn, credentials: Record<string, string>) {
@@ -63,7 +66,7 @@ export async function downloadReconciliationWorkbook(
   const lastDataRow = Math.max(4, sheet.rowCount);
   const totalValues = columns.map((column, index) => {
     if (index === 1) return "Filtered totals";
-    if (["portal_entry", "normal_total", "app_entry", "high_entry", "krishi_sakhi_received", "krishi_sakhi_pending", "vendor_received", "vendor_pending", "evidence_count"].includes(column)) {
+    if (["portal_entry", "normal_total", "app_entry", "high_entry", "krishi_sakhi_received", "krishi_sakhi_pending", "vendor_received", "vendor_pending", "sesta_received", "sesta_pending", "evidence_count"].includes(column)) {
       const letter = sheet.getColumn(index + 1).letter;
       return { formula: `SUM(${letter}4:${letter}${lastDataRow})` };
     }

@@ -5,7 +5,7 @@ from datetime import date
 from time import sleep
 
 from .adb import AdbDevice, PreflightResult
-from .appium_flow import AppiumFlow, ManualReviewRequired
+from .appium_flow import AppiumFlow, AutomationSetupError, ManualReviewRequired
 from .cloud import CloudClient
 from .evidence import EvidenceStore
 from .retry import RetryBudget
@@ -49,6 +49,7 @@ class AgentRunner:
         self.cloud.update_run(run_id, {"status": "running", "started_at": "now()"})
         self.cloud.heartbeat(status="running", current_stage="Starting verification")
         flow = AppiumFlow(self.settings.appium_url, self.settings.android_package, self.settings.android_activity, self.device, SelectorProfile(self.settings.selector_profile), EvidenceStore(self.settings.evidence_dir))
+        setup_error: str | None = None
         try:
             jobs = self.cloud.queued_jobs(run_id)
             for job in jobs:
@@ -73,21 +74,33 @@ class AgentRunner:
                     except ManualReviewRequired as error:
                         self.cloud.update_job(job["id"], {"status": "manual_review", "issue_type": "uncertain_read", "error_message": str(error), "completed_at": "now()"})
                         break
+                    except AutomationSetupError as error:
+                        setup_error = str(error)
+                        self.cloud.update_job(job["id"], {"status": "manual_review", "issue_type": "uncertain_read", "error_message": str(error), "completed_at": "now()"})
+                        self.cloud.heartbeat(status="paused", current_stage="Setup error — batch stopped safely", running_ids=0)
+                        self.stop_event.set()
+                        break
                     except Exception as error:
                         if budget.allow_transient_retry():
                             sleep(2); continue
                         self.cloud.update_job(job["id"], {"status": "pending", "issue_type": "network_server", "error_message": str(error), "transient_attempts": budget.transient_attempts, "completed_at": "now()"})
                         break
-                try:
-                    flow.logout()
-                except Exception:
-                    pass
+                if not setup_error:
+                    try:
+                        flow.logout()
+                    except Exception:
+                        pass
                 self.cloud.refresh_agent_counts(run_id)
         finally:
             flow.close()
             final_status = "stopped" if self.stop_event.is_set() else "ok"
             self.cloud.update_run(run_id, {"status": final_status, "completed_at": "now()"})
-            self.cloud.heartbeat(status="idle", running_ids=0, current_user_id=None, current_stage=None)
+            self.cloud.heartbeat(
+                status="paused" if setup_error else "idle",
+                running_ids=0,
+                current_user_id=None,
+                current_stage="Setup error — batch stopped safely" if setup_error else None,
+            )
             self.current_run_id = None
 
     def pause(self): self.pause_event.clear(); self.cloud.heartbeat(status="paused")
