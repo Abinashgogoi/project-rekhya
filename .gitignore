@@ -52,3 +52,6 @@ __pycache__/
 # Project Rekhya device-local automation state
 /automation-agent/selector-profile.json
 /automation-agent/Evidence/
+
+# Python virtual environments
+/automation-agent/.venv/
