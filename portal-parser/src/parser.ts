@@ -2,12 +2,12 @@ import { detectHeaderMap } from "./header-map";
 import { canonicalFingerprint, normalizeUserId, parseAmount, parseExcelDate } from "./normalize";
 
 export const portalHeaders = {
-  userId: ["User ID", "UserID", "Login ID", "Mobile", "Mobile No", "Mobile Number", "User Mobile", "Operator ID"],
-  transactionDate: ["Transaction Date", "Txn Date", "Application Date", "Date of Application", "Created Date", "Payment Date"],
-  amount: ["Amount", "Premium Amount", "Paid Amount", "Transaction Amount"],
+  userId: ["User ID", "UserID", "Login ID", "Mobile", "Mobile No", "Mobile Number", "User Mobile", "Operator ID", "POS Mobile", "posMobile"],
+  transactionDate: ["Transaction Date", "Txn Date", "Application Date", "Date of Application", "Created Date", "Payment Date", "UTR Date", "utrDate"],
+  amount: ["Amount", "Premium Amount", "Paid Amount", "Transaction Amount", "UTR Amount", "utrAmount"],
   policyId: ["Policy ID", "Policy Number", "Policy No", "Application ID"],
-  applicantName: ["Applicant Name", "Farmer Name", "Beneficiary Name", "Name"],
-  status: ["Status", "Application Status", "Transaction Status"],
+  applicantName: ["Applicant Name", "Farmer Name", "Beneficiary Name", "Name", "POS Name", "posName"],
+  status: ["Status", "Application Status", "Transaction Status", "Policy Status", "policyStatus"],
 } as const;
 
 export type PortalRecordCandidate = {

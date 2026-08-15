@@ -17,6 +17,33 @@ test("portal parser includes only master-scoped User IDs", () => {
   assert.equal(result.ignoredOutOfScope, 1);
 });
 
+test("official TXN report headers map POS mobile and UTR fields", () => {
+  const result = parsePortalRows([
+    {
+      policyID: "xxxx-xxxx-0329",
+      policyStatus: "PAID",
+      utrAmount: 2800,
+      utrDate: "2026-07-31",
+      posName: "Authorized Operator",
+      posMobile: "7002632370",
+    },
+  ], new Set(["7002632370"]));
+
+  assert.equal(result.errors.length, 0);
+  assert.equal(result.records.length, 1);
+  assert.deepEqual(result.headerMap, {
+    userId: "posMobile",
+    transactionDate: "utrDate",
+    amount: "utrAmount",
+    policyId: "policyID",
+    applicantName: "posName",
+    status: "policyStatus",
+  });
+  assert.equal(result.records[0].userId, "7002632370");
+  assert.equal(result.records[0].transactionDate, "2026-07-31");
+  assert.equal(result.records[0].amount, 2800);
+});
+
 test("duplicate-looking portal records are preserved and flagged", () => {
   const rows = [
     { Mobile: "9876543210", "Txn Date": "2026-08-14", Amount: 350, "Farmer Name": "A" },
