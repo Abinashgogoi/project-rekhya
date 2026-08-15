@@ -533,7 +533,7 @@ function OperationalDashboard({ session, profile, developmentShell }: { session:
       setImportStatus(`Validating portal file ${index + 1} of ${files.length}: ${file.name}`);
       try {
         const workbook = await readWorkbookRows(file, "portal");
-        const parsedSheets = workbook.sheets.map((sheet) => ({ sheet, parsed: parsePortalRows(sheet.rows, scope) }));
+        const parsedSheets = workbook.sheets.map((sheet) => ({ sheet, parsed: parsePortalRows(sheet.rows, scope, workbook.reportDate) }));
         const errors = parsedSheets.flatMap(({ parsed }) => parsed.errors);
         const warnings = parsedSheets.flatMap(({ parsed }) => parsed.warnings);
         const records = parsedSheets.flatMap(({ parsed }) => parsed.records).map((record, recordIndex) => ({ ...record, sourceRowNumber: recordIndex + 1 }));
@@ -542,7 +542,7 @@ function OperationalDashboard({ session, profile, developmentShell }: { session:
         const dates = records.map((record) => record.transactionDate).sort();
         const headerMap = Object.fromEntries(parsedSheets.map(({ sheet, parsed }) => [
           sheet.worksheetName,
-          `row ${sheet.headerRowNumber}: ${Object.entries(parsed.headerMap).map(([field, header]) => `${field}←${header}`).join(", ")}`,
+          `row ${sheet.headerRowNumber}: ${Object.entries(parsed.headerMap).map(([field, header]) => `${field}←${header}`).join(", ")}${!parsed.headerMap.transactionDate && workbook.reportDate ? `, transactionDate←filename (${workbook.reportDate})` : ""}`,
         ]));
         prepared.push({
           key: `portal:${workbook.sha256}`,

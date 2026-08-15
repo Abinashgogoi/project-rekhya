@@ -1,6 +1,7 @@
 import type ExcelJS from "exceljs";
 import { normalizeHeader } from "../../portal-parser/src/header-map";
 import { masterHeaders } from "../../portal-parser/src/master-parser";
+import { parseExcelDate } from "../../portal-parser/src/normalize";
 import { portalHeaders } from "../../portal-parser/src/parser";
 
 export type WorkbookKind = "master" | "portal";
@@ -10,7 +11,13 @@ function definitionsFor(kind: WorkbookKind) {
 }
 
 function requiredFieldsFor(kind: WorkbookKind) {
-  return kind === "master" ? new Set(["name", "userId"]) : new Set(["userId", "transactionDate"]);
+  return kind === "master" ? new Set(["name", "userId"]) : new Set(["userId"]);
+}
+
+export function reportDateFromFilename(filename: string) {
+  const match = filename.match(/(?:^|\D)(\d{1,2})[-_.](\d{1,2})[-_.](\d{4})(?=\D|$)/);
+  if (!match) return null;
+  return parseExcelDate(`${match[1]}-${match[2]}-${match[3]}`).date;
 }
 
 export function scoreWorkbookHeader(headers: string[], kind: WorkbookKind) {
@@ -104,7 +111,7 @@ export async function readWorkbookRows(file: File, kind: WorkbookKind) {
       rowCount: rows.length,
     });
   }
-  if (!sheets.length) throw new Error(`${file.name}: no worksheet with the required ${kind === "master" ? "Name and User ID/Mobile" : "User ID and transaction date"} headings was found in the first 30 rows.`);
+  if (!sheets.length) throw new Error(`${file.name}: no worksheet with the required ${kind === "master" ? "Name and User ID/Mobile" : "User ID/Mobile"} headings was found in the first 30 rows.`);
   const sha256 = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
   const primarySheet = sheets[0];
   return {
@@ -116,5 +123,6 @@ export async function readWorkbookRows(file: File, kind: WorkbookKind) {
     sha256,
     mimeType: file.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     rowCount: sheets.reduce((total, sheet) => total + sheet.rowCount, 0),
+    reportDate: kind === "portal" ? reportDateFromFilename(file.name) : null,
   };
 }

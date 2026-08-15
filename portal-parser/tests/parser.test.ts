@@ -5,7 +5,7 @@ import { detectHeaderMap } from "../src/header-map";
 import { inferMasterSheetContext, masterHeaders, mergeMasterRecordsByUserId, parseMasterRows } from "../src/master-parser";
 import { parsePortalRows } from "../src/parser";
 import { parseExcelDate } from "../src/normalize";
-import { findLikelyHeaderRow, readWorkbookRows } from "../../dashboard/lib/excel-import";
+import { findLikelyHeaderRow, readWorkbookRows, reportDateFromFilename } from "../../dashboard/lib/excel-import";
 
 test("portal parser includes only master-scoped User IDs", () => {
   const result = parsePortalRows([
@@ -17,23 +17,22 @@ test("portal parser includes only master-scoped User IDs", () => {
   assert.equal(result.ignoredOutOfScope, 1);
 });
 
-test("official TXN report headers map POS mobile and UTR fields", () => {
+test("official daily TXN report maps POS mobile and uses filename date instead of UTR settlement date", () => {
   const result = parsePortalRows([
     {
       policyID: "xxxx-xxxx-0329",
       policyStatus: "PAID",
       utrAmount: 2800,
-      utrDate: "2026-07-31",
+      utrDate: "2026-08-04",
       posName: "Authorized Operator",
       posMobile: "7002632370",
     },
-  ], new Set(["7002632370"]));
+  ], new Set(["7002632370"]), "2026-07-31");
 
   assert.equal(result.errors.length, 0);
   assert.equal(result.records.length, 1);
   assert.deepEqual(result.headerMap, {
     userId: "posMobile",
-    transactionDate: "utrDate",
     amount: "utrAmount",
     policyId: "policyID",
     applicantName: "posName",
@@ -142,6 +141,11 @@ test("Excel serial and Indian day-first dates are parsed", () => {
   assert.equal(parseExcelDate("31/07/2026").date, "2026-07-31");
 });
 
+test("daily TXN report date is detected from the filename", () => {
+  assert.equal(reportDateFromFilename("31-07-2026 txn_report.xlsx"), "2026-07-31");
+  assert.equal(reportDateFromFilename("txn_report.xlsx"), null);
+});
+
 test("missing required columns fail without guessing", () => {
   const result = parsePortalRows([{ Name: "A", Amount: 100 }], new Set(["1"]));
   assert.equal(result.records.length, 0);
@@ -165,7 +169,7 @@ test("portal workbook header detection skips report metadata", () => {
     ["Mobile No.", "Transaction Date", "Amount", "Policy ID"],
   ], "portal");
   assert.equal(result.rowNumber, 3);
-  assert.equal(result.requiredMatches, 2);
+  assert.equal(result.requiredMatches, 1);
 });
 
 test("workbook reader does not truncate sheets with leading blank rows", async () => {

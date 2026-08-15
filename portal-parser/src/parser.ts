@@ -3,7 +3,7 @@ import { canonicalFingerprint, normalizeUserId, parseAmount, parseExcelDate } fr
 
 export const portalHeaders = {
   userId: ["User ID", "UserID", "Login ID", "Mobile", "Mobile No", "Mobile Number", "User Mobile", "Operator ID", "POS Mobile", "posMobile"],
-  transactionDate: ["Transaction Date", "Txn Date", "Application Date", "Date of Application", "Created Date", "Payment Date", "UTR Date", "utrDate"],
+  transactionDate: ["Transaction Date", "Txn Date", "Application Date", "Date of Application", "Created Date"],
   amount: ["Amount", "Premium Amount", "Paid Amount", "Transaction Amount", "UTR Amount", "utrAmount"],
   policyId: ["Policy ID", "Policy Number", "Policy No", "Application ID"],
   applicantName: ["Applicant Name", "Farmer Name", "Beneficiary Name", "Name", "POS Name", "posName"],
@@ -16,9 +16,10 @@ export type PortalRecordCandidate = {
   fingerprintSource: string; possibleDuplicateWithinFile: boolean; rawFields: Record<string, unknown>;
 };
 
-export function parsePortalRows(rows: Array<Record<string, unknown>>, inScopeUserIds: ReadonlySet<string>) {
+export function parsePortalRows(rows: Array<Record<string, unknown>>, inScopeUserIds: ReadonlySet<string>, fallbackTransactionDate: string | null = null) {
   const headers = rows.length ? Object.keys(rows[0]) : [];
-  const detected = detectHeaderMap<keyof typeof portalHeaders>(headers, portalHeaders, ["userId", "transactionDate"]);
+  const required: Array<keyof typeof portalHeaders> = fallbackTransactionDate ? ["userId"] : ["userId", "transactionDate"];
+  const detected = detectHeaderMap<keyof typeof portalHeaders>(headers, portalHeaders, required);
   if (detected.errors.length) return { records: [] as PortalRecordCandidate[], ignoredOutOfScope: 0, warnings: [], errors: detected.errors, headerMap: detected.map };
   const map = detected.map;
   const records: PortalRecordCandidate[] = [];
@@ -31,7 +32,7 @@ export function parsePortalRows(rows: Array<Record<string, unknown>>, inScopeUse
     const userId = normalizeUserId(row[map.userId!]);
     if (!userId) { errors.push(`Row ${rowNumber}: User ID is blank or invalid.`); return; }
     if (!inScopeUserIds.has(userId)) { ignoredOutOfScope += 1; return; }
-    const parsedDate = parseExcelDate(row[map.transactionDate!]);
+    const parsedDate = parseExcelDate(map.transactionDate ? row[map.transactionDate] : fallbackTransactionDate);
     if (!parsedDate.date) { errors.push(`Row ${rowNumber}: transaction date is blank or invalid.`); return; }
     if (parsedDate.warning) warnings.push(`Row ${rowNumber}: ${parsedDate.warning}`);
     const amount = map.amount ? parseAmount(row[map.amount]) : null;
