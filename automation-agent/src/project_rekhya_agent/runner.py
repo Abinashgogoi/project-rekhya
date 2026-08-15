@@ -37,6 +37,8 @@ class AgentRunner:
             cloud_sync_connected=True,
             status="idle" if not result.problems else "disconnected",
             current_stage="Ready" if not result.problems else "Preflight blocked",
+            current_user_id=None,
+            running_ids=0,
             heartbeat_at="now()",
         )
         return result
