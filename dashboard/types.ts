@@ -5,6 +5,7 @@ export type ReconciliationRow = {
   group_name: "Krishi Sakhi" | "Vendor" | string | null; portal_entry: number;
   normal_total: number; high_entry: number; app_entry: number; dashboard_unpaid: number | null;
   unpaid_list_count: number | null; pre_cutoff_count: number; verification_status: string | null;
+  issue_type: string | null;
   krishi_sakhi_received: number | null; krishi_sakhi_pending: number | null;
   vendor_received: number | null; vendor_pending: number | null;
   sesta_received: number | null; sesta_pending: number | null; evidence_count: number;

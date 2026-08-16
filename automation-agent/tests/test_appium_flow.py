@@ -45,3 +45,46 @@ def test_merge_scrolled_page_keeps_legitimate_duplicates_but_removes_scroll_over
     legitimate_duplicate = [record(12, 100, "D"), record(12, 100, "D")]
     merged = AppiumFlow._merge_scrolled_page([], legitimate_duplicate)
     assert len(merged) == 2
+
+
+def test_parse_amount_accepts_real_rupee_symbol():
+    assert AppiumFlow._parse_amount("\u20b9100") == 100.0
+    assert AppiumFlow._parse_amount("Premium: \u20b9240") == 240.0
+
+
+def test_parse_amount_accepts_mojibake_rupee_symbol():
+    assert AppiumFlow._parse_amount("Ã¢â€šÂ¹240") == 240.0
+
+
+
+def test_physically_calibrated_dashboard_cycle_selectors():
+    from project_rekhya_agent.default_profile import DEFAULT_SELECTORS
+
+    expected = {
+        "dashboard_menu":
+            "com.application.pmfby.aide:id/iv_hamburger",
+        "menu_displayed_user_id":
+            "com.application.pmfby.aide:id/tv_code",
+        "menu_close":
+            "com.application.pmfby.aide:id/iv_close",
+        "dashboard_unpaid_count":
+            "com.application.pmfby.aide:id/tv_draft_count",
+        "unpaid_tile":
+            "com.application.pmfby.aide:id/cl_draft_application",
+        "unpaid_page_title":
+            "com.application.pmfby.aide:id/tv_title",
+        "unpaid_back":
+            "com.application.pmfby.aide:id/iv_navigation",
+        "unpaid_list":
+            "com.application.pmfby.aide:id/rv_policy",
+        "sign_out":
+            "com.application.pmfby.aide:id/nav_sign_out",
+        "logout_yes":
+            "com.application.pmfby.aide:id/tv_yes",
+    }
+
+    for key, resource_id in expected.items():
+        assert DEFAULT_SELECTORS[key][0] == {
+            "by": "id",
+            "value": resource_id,
+        }

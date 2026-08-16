@@ -16,6 +16,14 @@ def _text_contains(value: str) -> dict[str, str]:
 # fallbacks so normal operation does not require the operator to answer a long
 # sequence of numbered calibration questions.
 DEFAULT_SELECTORS: dict[str, list[dict[str, str]]] = {
+    "sim1_overview": [
+        _text("SIM1"),
+        _text_contains("SIM1"),
+    ],
+    "sim_info_title": [
+        _text("SIM info & settings"),
+        _text_contains("SIM info"),
+    ],
     "sim_number_open": [_text("SIM number")],
     "sim_number_field": [
         {"by": "id", "value": "com.android.phone:id/dialog_bottom_sheet_edit_text_layoutnormal_bottom_sheet_edit_text"},
@@ -27,6 +35,13 @@ DEFAULT_SELECTORS: dict[str, list[dict[str, str]]] = {
     "google_phone_number_choice": [
         {"by": "id", "value": "com.google.android.gms:id/phone_number_list_item"},
         {"by": "id", "value": "com.google.android.gms:id/phone_number"},
+    ],
+    "pmfby_landing_text": [
+        _text("Login to continue"),
+        _text_contains("Login to continue"),
+    ],
+    "pmfby_landing_login": [
+        {"by": "-android uiautomator", "value": 'new UiSelector().textMatches("(?i)^Login$")'},
     ],
     "login_mobile_value": [{"by": "id", "value": "com.application.pmfby.aide:id/et_mobile_number"}],
     "login_password": [{"by": "id", "value": "com.application.pmfby.aide:id/et_password"}],
@@ -41,7 +56,14 @@ DEFAULT_SELECTORS: dict[str, list[dict[str, str]]] = {
     "scheme_pmfby": [_text("PMFBY"), _text_contains("Pradhan Mantri Fasal Bima Yojana")],
     "year_2026": [_text("2026")],
     "submit_next": [
-        {"by": "-android uiautomator", "value": 'new UiSelector().textMatches("(?i)^(submit|next|continue)$")'},
+        {
+            "by": "-android uiautomator",
+            "value": 'new UiSelector().textMatches("(?i)^\\s*(submit\\s*(?:&|and)\\s*next|submit|next|continue)\\s*$")',
+        },
+        {
+            "by": "-android uiautomator",
+            "value": 'new UiSelector().textContains("Submit")',
+        },
     ],
     "dashboard_menu": [
         {"by": "id", "value": "com.application.pmfby.aide:id/iv_navigation"},
@@ -69,6 +91,52 @@ DEFAULT_SELECTORS: dict[str, list[dict[str, str]]] = {
     ],
 }
 
+
+# BEGIN PHYSICAL PMFBY SELECTOR OVERRIDES
+# Realme RMX3867 + official PMFBY app.
+# These resource IDs were physically captured from the running application.
+DEFAULT_SELECTORS.update({
+    "dashboard_menu": [
+        {"by": "id", "value": "com.application.pmfby.aide:id/iv_hamburger"},
+    ],
+    "dashboard_header_user_id": [
+        {"by": "id", "value": "com.application.pmfby.aide:id/tv_user_name"},
+    ],
+    "menu_displayed_user_id": [
+        {"by": "id", "value": "com.application.pmfby.aide:id/tv_code"},
+    ],
+    "menu_close": [
+        {"by": "id", "value": "com.application.pmfby.aide:id/iv_close"},
+    ],
+    "dashboard_unpaid_count": [
+        {"by": "id", "value": "com.application.pmfby.aide:id/tv_draft_count"},
+    ],
+    "unpaid_tile": [
+        {"by": "id", "value": "com.application.pmfby.aide:id/cl_draft_application"},
+    ],
+    "unpaid_list_header_count": [
+        {"by": "id", "value": "com.application.pmfby.aide:id/tv_title"},
+    ],
+    "unpaid_page_title": [
+        {"by": "id", "value": "com.application.pmfby.aide:id/tv_title"},
+    ],
+    "unpaid_back": [
+        {"by": "id", "value": "com.application.pmfby.aide:id/iv_navigation"},
+    ],
+    "unpaid_list": [
+        {"by": "id", "value": "com.application.pmfby.aide:id/rv_policy"},
+    ],
+    "sign_out": [
+        {"by": "id", "value": "com.application.pmfby.aide:id/nav_sign_out"},
+    ],
+    "logout_title": [
+        {"by": "id", "value": "com.application.pmfby.aide:id/tv_title"},
+    ],
+    "logout_yes": [
+        {"by": "id", "value": "com.application.pmfby.aide:id/tv_yes"},
+    ],
+})
+# END PHYSICAL PMFBY SELECTOR OVERRIDES
 
 def default_profile_payload() -> dict[str, object]:
     return {

@@ -14,6 +14,7 @@ def startup():
     global runner
     runner = AgentRunner(Settings())
     runner.preflight()
+    runner.start_device_health_monitor()
     runner.start_command_loop()
 
 

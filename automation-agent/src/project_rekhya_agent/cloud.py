@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,12 @@ class CloudClient:
         response = self.client.auth.sign_in_with_password({"email": email, "password": password})
         if not response.session:
             raise RuntimeError("Technical-officer cloud sign-in failed")
+        self.evidence_provider = os.getenv("REKHYA_EVIDENCE_PROVIDER", "supabase").strip().lower()
+        self.gcs_bucket_name = os.getenv("REKHYA_GCS_BUCKET", "project-rekhya-evidence").strip()
+        self.gcs_client = None
+        if self.evidence_provider == "google_cloud_storage":
+            from google.cloud import storage
+            self.gcs_client = storage.Client(project=os.getenv("GOOGLE_CLOUD_PROJECT") or None)
 
     @staticmethod
     def _timestamps(values: dict[str, Any]):
@@ -58,14 +65,68 @@ class CloudClient:
         self.client.table("verification_runs").update(self._timestamps(values)).eq("id", run_id).execute()
 
     def queued_jobs(self, run_id: str):
+        # A restarted/resumed run must never replay already-finished jobs.
         return (
             self.client.table("verification_jobs")
             .select("*,workers(id,user_id,name)")
+            .eq("run_id", run_id)
+            .eq("status", "queued")
+            .order("queue_position")
+            .execute()
+            .data
+        )
+
+    def prepare_resume_run(self, run_id: str):
+        """Safely restore only resumable unfinished jobs for a stopped agent process.
+
+        Completed/manual-review/password/network jobs are intentionally left untouched.
+        A stale RUNNING job is re-queued only when its latest checkpoint explicitly says
+        it is resumable. This prevents a historical completed job from being replayed.
+        """
+        jobs = (
+            self.client.table("verification_jobs")
+            .select("id,status,issue_type,queue_position")
             .eq("run_id", run_id)
             .order("queue_position")
             .execute()
             .data
         )
+
+        requeued = []
+        for job in jobs:
+            status = job.get("status")
+            if status == "queued":
+                requeued.append(job["id"])
+                continue
+
+            checkpoint = self.latest_checkpoint(job["id"])
+            checkpoint_resumable = bool(checkpoint and checkpoint.get("resumable"))
+
+            safe_resume = (
+                status in {"running", "paused"}
+                or (status == "pending" and job.get("issue_type") == "device")
+            )
+
+            if safe_resume and checkpoint_resumable:
+                self.client.table("verification_jobs").update({
+                    "status": "queued",
+                    "current_stage": "Queued for checkpoint-safe resume",
+                    "error_message": None,
+                    "completed_at": None,
+                }).eq("id", job["id"]).execute()
+                requeued.append(job["id"])
+
+        if not requeued:
+            raise RuntimeError(
+                "This run has no queued or checkpoint-resumable job. "
+                "Completed/manual-review/password/network jobs were not replayed."
+            )
+
+        self.client.table("verification_runs").update({
+            "status": "queued",
+            "completed_at": None,
+        }).eq("id", run_id).execute()
+        return requeued
 
     def retry_pending_jobs(self, run_id: str | None):
         query = (
@@ -115,12 +176,84 @@ class CloudClient:
         return response.json()["password"]
 
     def upload_evidence(self, local_path: Path, remote_path: str, mime_type: str):
+        if self.evidence_provider == "google_cloud_storage":
+            if self.gcs_client is None:
+                raise RuntimeError("Google Cloud Storage client is not initialized")
+            bucket = self.gcs_client.bucket(self.gcs_bucket_name)
+            blob = bucket.blob(remote_path)
+            if not blob.exists():
+                blob.upload_from_filename(str(local_path), content_type=mime_type)
+            return {
+                "storage_provider": "google_cloud_storage",
+                "storage_bucket": self.gcs_bucket_name,
+                "storage_path": remote_path,
+                "object_key": remote_path,
+            }
+
         with local_path.open("rb") as source:
             self.client.storage.from_("project-rekhya-evidence").upload(
                 remote_path,
                 source,
                 {"content-type": mime_type, "upsert": "false"},
             )
+        return {
+            "storage_provider": "supabase",
+            "storage_bucket": "project-rekhya-evidence",
+            "storage_path": remote_path,
+            "object_key": remote_path,
+        }
+
+    def save_checkpoint(
+        self,
+        *,
+        run_id: str,
+        job_id: str,
+        worker_id: str,
+        stage: str,
+        app_location: str,
+        displayed_user_id: str | None = None,
+        last_completed_action: str | None = None,
+        next_action: str | None = None,
+        interruption_reason: str | None = None,
+        resumable: bool = True,
+        state: dict[str, Any] | None = None,
+    ):
+        existing = (
+            self.client.table("verification_checkpoints")
+            .select("sequence_no")
+            .eq("job_id", job_id)
+            .order("sequence_no", desc=True)
+            .limit(1)
+            .execute()
+            .data
+        )
+        sequence_no = (int(existing[0]["sequence_no"]) + 1) if existing else 1
+        self.client.table("verification_checkpoints").insert({
+            "run_id": run_id,
+            "job_id": job_id,
+            "worker_id": worker_id,
+            "sequence_no": sequence_no,
+            "stage": stage,
+            "app_location": app_location,
+            "displayed_user_id": displayed_user_id,
+            "last_completed_action": last_completed_action,
+            "next_action": next_action,
+            "interruption_reason": interruption_reason,
+            "resumable": resumable,
+            "state": state or {},
+        }).execute()
+
+    def latest_checkpoint(self, job_id: str):
+        rows = (
+            self.client.table("verification_checkpoints")
+            .select("*")
+            .eq("job_id", job_id)
+            .order("sequence_no", desc=True)
+            .limit(1)
+            .execute()
+            .data
+        )
+        return rows[0] if rows else None
 
     def persist_app_result(
         self,
@@ -174,10 +307,11 @@ class CloudClient:
             on_conflict="run_id,worker_id,start_date,end_date",
         ).execute()
 
-        # Upload each unique screenshot only once and register it in evidence_files.
-        seen_paths = set()
-        for record in result.records:
-            path = Path(record.evidence_path)
+        # Upload every captured screenshot once, not just card-linked images.
+        candidates = [Path(value) for value in result.metadata.get("evidence_paths", [])]
+        candidates.extend(Path(record.evidence_path) for record in result.records)
+        seen_paths: set[Path] = set()
+        for path in candidates:
             if path in seen_paths or not path.exists():
                 continue
             seen_paths.add(path)
@@ -185,19 +319,37 @@ class CloudClient:
             digest = hashlib.sha256(path.read_bytes()).hexdigest()
             remote_path = f"{run_id}/{worker_id}/{path.name}"
             try:
-                self.upload_evidence(path, remote_path, "image/png")
+                storage_meta = self.upload_evidence(path, remote_path, "image/png")
             except Exception as error:
-                # Upsert/retry may find that storage object already exists.
                 if "already exists" not in str(error).lower() and "duplicate" not in str(error).lower():
                     raise
+                storage_meta = {
+                    "storage_provider": self.evidence_provider,
+                    "storage_bucket": self.gcs_bucket_name if self.evidence_provider == "google_cloud_storage" else "project-rekhya-evidence",
+                    "storage_path": remote_path,
+                    "object_key": remote_path,
+                }
+
+            category = "unpaid-list"
+            lowered = str(path).lower()
+            if "identity" in lowered:
+                category = "identity"
+            elif "dashboard" in lowered:
+                category = "dashboard"
+            elif "error" in lowered:
+                category = "errors"
 
             self.client.table("evidence_files").upsert({
                 "worker_id": worker_id,
                 "run_id": run_id,
                 "job_id": job_id,
-                "category": "unpaid-list",
-                "storage_bucket": "project-rekhya-evidence",
-                "storage_path": remote_path,
+                "category": category,
+                "storage_provider": storage_meta["storage_provider"],
+                "storage_bucket": storage_meta["storage_bucket"],
+                "storage_path": storage_meta["storage_path"],
+                "object_key": storage_meta["object_key"],
+                "file_size_bytes": path.stat().st_size,
+                "run_scope": "current",
                 "original_filename": path.name,
                 "mime_type": "image/png",
                 "sha256": digest,
