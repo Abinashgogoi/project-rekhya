@@ -181,7 +181,16 @@ class CloudClient:
             headers={"Authorization": f"Bearer {session.access_token}"},
             timeout=30,
         )
-        response.raise_for_status()
+        if response.status_code >= 400:
+            try:
+                payload = response.json()
+                detail = payload.get("error") if isinstance(payload, dict) else None
+            except Exception:
+                detail = None
+            raise RuntimeError(
+                f"Credential API {response.status_code}: "
+                f"{detail or 'server returned an unreadable error'}"
+            )
         return response.json()["password"]
 
     def upload_evidence(self, local_path: Path, remote_path: str, mime_type: str):

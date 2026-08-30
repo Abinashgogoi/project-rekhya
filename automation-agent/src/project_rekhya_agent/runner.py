@@ -166,6 +166,7 @@ class AgentRunner:
                 self.current_job_id = job["id"]
                 self.current_worker_id = worker["id"]
                 budget = RetryBudget()
+                account_session_started = False
 
                 self.cloud.heartbeat(
                     current_user_id=worker["user_id"],
@@ -198,6 +199,7 @@ class AgentRunner:
                             })
                             break
 
+                        account_session_started = True
                         result = flow.verify_account(
                             worker["user_id"],
                             worker["name"],
@@ -400,7 +402,7 @@ class AgentRunner:
                         })
                         break
 
-                if not setup_error:
+                if not setup_error and account_session_started:
                     try:
                         flow.logout()
                     except Exception as logout_error:
