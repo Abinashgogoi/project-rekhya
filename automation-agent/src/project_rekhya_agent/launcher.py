@@ -30,6 +30,20 @@ def _agent_ready(timeout: float = 0.8) -> bool:
         return False
 
 
+def _revive_existing_agent(timeout: float = 8.0) -> bool:
+    try:
+        request = urllib.request.Request(
+            "http://127.0.0.1:8765/preflight",
+            data=b"",
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return response.status == 200
+    except Exception as error:
+        _log(f"Existing agent revive failed: {type(error).__name__}: {error}")
+        return False
+
+
 def _augmented_env() -> dict[str, str]:
     env = os.environ.copy()
     candidates = [
@@ -46,7 +60,10 @@ def _augmented_env() -> dict[str, str]:
 
 def _start_agent() -> None:
     if _agent_ready():
-        _log("Agent already healthy; launcher exiting.")
+        if _revive_existing_agent():
+            _log("Existing agent healthy and background loops revived.")
+            return
+        _log("Existing agent answered /health but revive failed.")
         return
 
     agent_root = Path(__file__).resolve().parents[2]

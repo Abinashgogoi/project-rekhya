@@ -33,6 +33,8 @@ def health():
 def preflight():
     if not runner:
         raise HTTPException(503, "Agent is not initialized")
+    runner.start_device_health_monitor()
+    runner.start_command_loop()
     return runner.preflight().as_dict()
 
 

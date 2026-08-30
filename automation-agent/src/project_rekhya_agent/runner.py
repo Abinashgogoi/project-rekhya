@@ -32,6 +32,7 @@ class AgentRunner:
         self.service_stop = threading.Event()
         self.worker_thread: threading.Thread | None = None
         self.health_thread: threading.Thread | None = None
+        self.command_thread: threading.Thread | None = None
         self.current_run_id: str | None = None
         self.current_job_id: str | None = None
         self.current_worker_id: str | None = None
@@ -576,13 +577,16 @@ class AgentRunner:
         return self.health_thread
 
     def start_command_loop(self):
-        thread = threading.Thread(
+        if self.command_thread and self.command_thread.is_alive():
+            return self.command_thread
+
+        self.command_thread = threading.Thread(
             target=self.command_loop,
             daemon=True,
             name="project-rekhya-command-loop",
         )
-        thread.start()
-        return thread
+        self.command_thread.start()
+        return self.command_thread
 
     def shutdown(self):
         self.service_stop.set()
