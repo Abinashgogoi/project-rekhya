@@ -1,12 +1,31 @@
 from __future__ import annotations
 
 from fastapi import FastAPI, HTTPException
+import os
+import subprocess
+from pathlib import Path
 
 from .runner import AgentRunner
 from .settings import Settings
 
 app = FastAPI(title="Project Rekhya Android Verification Agent", docs_url=None, redoc_url=None)
 runner: AgentRunner | None = None
+
+
+def _runtime_revision() -> str:
+    try:
+        agent_root = Path(__file__).resolve().parents[2]
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=agent_root,
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except Exception:
+        return "unknown"
+
+
+RUNTIME_REVISION = _runtime_revision()
 
 
 @app.on_event("startup")
@@ -26,7 +45,12 @@ def shutdown():
 
 @app.get("/health")
 def health():
-    return {"project": "project-rekhya", "status": "ready"}
+    return {
+        "project": "project-rekhya",
+        "status": "ready",
+        "pid": os.getpid(),
+        "revision": RUNTIME_REVISION,
+    }
 
 
 @app.post("/preflight")

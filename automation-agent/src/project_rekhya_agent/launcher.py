@@ -5,6 +5,7 @@ import subprocess
 import sys
 import time
 import urllib.request
+import json
 from pathlib import Path
 
 HEALTH_URL = "http://127.0.0.1:8765/health"
@@ -22,11 +23,51 @@ def _log(message: str) -> None:
         handle.write(f"[{stamp}] {message}\n")
 
 
-def _agent_ready(timeout: float = 0.8) -> bool:
+def _expected_revision() -> str:
+    try:
+        agent_root = Path(__file__).resolve().parents[2]
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=agent_root,
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except Exception:
+        return "unknown"
+
+
+def _health_payload(timeout: float = 0.8) -> dict | None:
     try:
         with urllib.request.urlopen(HEALTH_URL, timeout=timeout) as response:
-            return response.status == 200
+            if response.status != 200:
+                return None
+            payload = json.loads(response.read().decode("utf-8"))
+            return payload if isinstance(payload, dict) else None
     except Exception:
+        return None
+
+
+def _agent_ready(timeout: float = 0.8) -> bool:
+    return _health_payload(timeout) is not None
+
+
+def _terminate_stale_agent(payload: dict) -> bool:
+    pid = payload.get("pid")
+    if not isinstance(pid, int) or pid <= 0:
+        return False
+    try:
+        if sys.platform == "win32":
+            result = subprocess.run(
+                ["taskkill", "/PID", str(pid), "/T", "/F"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+            return result.returncode == 0
+        os.kill(pid, 15)
+        return True
+    except Exception as error:
+        _log(f"Could not terminate stale agent pid={pid}: {type(error).__name__}: {error}")
         return False
 
 
@@ -59,12 +100,33 @@ def _augmented_env() -> dict[str, str]:
 
 
 def _start_agent() -> None:
-    if _agent_ready():
-        if _revive_existing_agent():
-            _log("Existing agent healthy and background loops revived.")
+    payload = _health_payload()
+    if payload is not None:
+        expected = _expected_revision()
+        running = str(payload.get("revision") or "unknown")
+        if expected != "unknown" and running == expected:
+            if _revive_existing_agent():
+                _log(f"Existing agent healthy at revision {running} and background loops revived.")
+                return
+            _log("Existing agent answered /health but revive failed.")
             return
-        _log("Existing agent answered /health but revive failed.")
-        return
+
+        _log(
+            f"Stale agent detected: running revision={running}, expected={expected}, "
+            f"pid={payload.get('pid')}"
+        )
+        if not _terminate_stale_agent(payload):
+            _log("Stale agent could not be terminated automatically.")
+            return
+
+        deadline = time.monotonic() + 8
+        while time.monotonic() < deadline:
+            if _health_payload() is None:
+                break
+            time.sleep(0.25)
+        else:
+            _log("Stale agent remained reachable after termination request.")
+            return
 
     agent_root = Path(__file__).resolve().parents[2]
     python = agent_root / ".venv" / "Scripts" / "python.exe"
