@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import {
   Activity, AlertTriangle, Bot, CheckCircle2, ChevronDown, CircleDollarSign, Database, Download, Eye,
@@ -17,6 +17,8 @@ type AgentSummary = {
   currentUserId: string | null; currentStage: string | null;
   deviceConnected: boolean; adbAuthorized: boolean; simDetected: boolean; officialAppReady: boolean; cloudSyncConnected: boolean;
   status: "idle" | "running" | "paused" | "disconnected";
+  heartbeatAt: string | null;
+  heartbeatFresh: boolean;
 };
 
 type DashboardView = "operations" | "portal" | "app" | "reconciliation" | "evidence" | "passport" | "imports" | "credentials" | "access" | "audit" | "trash";
@@ -54,6 +56,7 @@ const emptyAgent: AgentSummary = {
   total: 0, completed: 0, running: 0, passwordPending: 0, networkPending: 0,
   currentUserId: null, currentStage: null, deviceConnected: false, adbAuthorized: false,
   simDetected: false, officialAppReady: false, cloudSyncConnected: false, status: "disconnected",
+  heartbeatAt: null, heartbeatFresh: false,
 };
 const formatCount = new Intl.NumberFormat("en-IN");
 const formatMoney = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 });
@@ -193,7 +196,8 @@ function OperationalDashboard({ session, profile, developmentShell }: { session:
   const canManageAccess = profile?.role === "admin";
   const canUpdatePassport = profile?.role === "admin" || profile?.role === "technical_officer" || profile?.role === "field_officer";
   const canVerifyPassport = profile?.role === "admin" || profile?.role === "technical_officer";
-  const phoneReady = liveStatusEnabled && agent.deviceConnected && agent.adbAuthorized && agent.simDetected && agent.officialAppReady && agent.cloudSyncConnected;
+  const agentHeartbeatFresh = agent.heartbeatFresh;
+  const phoneReady = liveStatusEnabled && agentHeartbeatFresh && agent.deviceConnected && agent.adbAuthorized && agent.simDetected && agent.officialAppReady && agent.cloudSyncConnected;
 
   const loadReport = useCallback(async () => {
     if (!supabase || !session) return;
@@ -219,6 +223,11 @@ function OperationalDashboard({ session, profile, developmentShell }: { session:
       adbAuthorized: Boolean(agentData.adb_authorized), simDetected: Boolean(agentData.sim_detected),
       officialAppReady: Boolean(agentData.official_app_ready), cloudSyncConnected: Boolean(agentData.cloud_sync_connected),
       status: agentData.status,
+      heartbeatAt: agentData.heartbeat_at ?? null,
+      heartbeatFresh: Boolean(
+        agentData.heartbeat_at &&
+        Date.now() - new Date(agentData.heartbeat_at).getTime() < 15000
+      ),
     });
   }, [canUseTechnical, liveStatusEnabled, session, supabase]);
 
@@ -338,9 +347,11 @@ function OperationalDashboard({ session, profile, developmentShell }: { session:
     const channel = supabase.channel(`project-rekhya-agent-${session.user.id}`)
       .on("postgres_changes", { event: "*", schema: "public", table: "agent_status" }, () => void loadAgentStatus())
       .subscribe();
+    const poll = window.setInterval(() => { void loadAgentStatus(); }, 5000);
 
     return () => {
       window.clearTimeout(initialLoad);
+      window.clearInterval(poll);
       void supabase.removeChannel(channel);
     };
   }, [canUseTechnical, liveStatusEnabled, loadAgentStatus, session, supabase]);
@@ -573,6 +584,19 @@ function OperationalDashboard({ session, profile, developmentShell }: { session:
       setLiveStatusEnabled(enabled);
       if (!enabled) setAgent(emptyAgent);
     }
+  }
+
+  async function prepareAndroid() {
+    if (!supabase || !session || !canUseTechnical) return;
+    setError(null);
+    if (!liveStatusEnabled) { setError("Turn Technical Live Status ON before preparing Android."); return; }
+    const { error: prepareError } = await supabase.rpc("enqueue_prepare_agent");
+    if (prepareError) { setError(prepareError.message); return; }
+    setImportStatus("Preparing Android. If the phone asks for USB debugging authorization, tap Allow on the phone.");
+    window.location.href = "rekhya://prepare";
+    window.setTimeout(() => void loadAgentStatus(), 1200);
+    window.setTimeout(() => void loadAgentStatus(), 3500);
+    window.setTimeout(() => void loadAgentStatus(), 7000);
   }
 
   async function issueAgentCommand(command: "start" | "pause" | "resume" | "retry_pending" | "stop_safely" | "restart" | "single") {
@@ -923,9 +947,9 @@ function OperationalDashboard({ session, profile, developmentShell }: { session:
         {profile?.role === "pending" && <div className="notice warning">Your account exists but an administrator must assign an operational role before records are available.</div>}
         {error && <div className="notice error" role="alert">{error}</div>}
         {importStatus && <div className="notice success" role="status">{importStatus}</div>}
-        <div className="status-strip" aria-label="System readiness"><strong>System readiness</strong>{canUseTechnical && liveStatusEnabled && <><span className="status-item"><i className={`status-icon ${agent.deviceConnected && agent.adbAuthorized ? "ready" : "pending"}`} /> Android {agent.deviceConnected && agent.adbAuthorized ? "connected" : "not connected"}</span><span className="status-item"><i className={`status-icon ${agent.simDetected ? "ready" : "pending"}`} /> SIM {agent.simDetected ? "detected" : "not detected"}</span><span className="status-item"><i className={`status-icon ${agent.officialAppReady ? "ready" : "pending"}`} /> Official app {agent.officialAppReady ? "ready" : "not ready"}</span></>}<span className="status-item"><i className="status-icon ready" /> Cloud sync {session ? "connected" : "not connected"}</span><span className="status-item"><i className="status-icon ready" /> Date range synchronized</span>{canUseTechnical && <button className={`button ${liveStatusEnabled ? "primary" : ""}`} onClick={() => void toggleLiveStatus()}>Technical Live Status {liveStatusEnabled ? "ON" : "OFF"}</button>}</div>
+        <div className="status-strip" aria-label="System readiness"><strong>System readiness</strong>{canUseTechnical && liveStatusEnabled && <><span className="status-item"><i className={`status-icon ${agentHeartbeatFresh && agent.deviceConnected && agent.adbAuthorized ? "ready" : "pending"}`} /> Android {agentHeartbeatFresh && agent.deviceConnected && agent.adbAuthorized ? "connected" : agent.deviceConnected && !agent.adbAuthorized ? "authorization required" : "not connected"}</span><span className="status-item"><i className={`status-icon ${agent.simDetected ? "ready" : "pending"}`} /> SIM {agent.simDetected ? "detected" : "not detected"}</span><span className="status-item"><i className={`status-icon ${agent.officialAppReady ? "ready" : "pending"}`} /> Official app {agent.officialAppReady ? "ready" : "not ready"}</span></>}<span className="status-item"><i className="status-icon ready" /> Cloud sync {session ? "connected" : "not connected"}</span><span className="status-item"><i className="status-icon ready" /> Date range synchronized</span>{canUseTechnical && <button className={`button ${liveStatusEnabled ? "primary" : ""}`} onClick={() => void toggleLiveStatus()}>Technical Live Status {liveStatusEnabled ? "ON" : "OFF"}</button>}</div>
         <section className="summary-grid" aria-label="Selected-range summary"><Metric label="In-scope User IDs" value={metrics.ids} note={`${appliedRange.start} → ${appliedRange.end}`} icon={<UsersRound size={16} />} /><Metric label="Verified Accounts" value={metrics.verified} note="App identity status OK" icon={<ShieldCheck size={16} />} /><Metric label="Portal Entry" value={metrics.portal} note="Matched transaction rows" icon={<Database size={16} />} /><Metric label="App Entry" value={metrics.app} note="Normal ₹100 + High Entry" icon={<CircleDollarSign size={16} />} /></section>
-        {canUseTechnical && <section className="section-grid"><article className="card panel"><div className="panel-head"><div><h3>Android Verification Agent</h3><p>Technical controls are isolated from field accounts. Turn Live Status ON before issuing commands.</p></div><span className={`pill ${liveStatusEnabled && (agent.status === "running" || phoneReady) ? "ok" : "pending"}`}>{!liveStatusEnabled ? "Live status off" : agent.status === "disconnected" ? "Phone not connected" : agent.status}</span></div><div className="agent-state"><div className="agent-cell"><span>Total IDs</span><strong>{liveStatusEnabled ? formatCount.format(agent.total) : "\u2014"}</strong></div><div className="agent-cell"><span>Completed</span><strong>{liveStatusEnabled ? formatCount.format(agent.completed) : "\u2014"}</strong></div><div className="agent-cell"><span>Current User ID</span><strong>{agent.currentUserId ?? "—"}</strong></div><div className="agent-cell"><span>Current Stage</span><strong>{agent.currentStage ?? (liveStatusEnabled ? "Waiting for device" : "Live status disabled")}</strong></div></div><div className="agent-progress" aria-label={`${progress}% complete`}><span style={{ width: `${progress}%` }} /></div><div className="single-run-control"><input className="control" inputMode="numeric" value={singleUserId} onChange={(event) => setSingleUserId(event.target.value.replace(/\D/g, "").slice(0, 10))} placeholder="Exact 10-digit User ID for Custom Test" /><button className="button primary" onClick={() => void issueAgentCommand("single")} disabled={!liveStatusEnabled || !phoneReady || !/^\d{10}$/.test(singleUserId)}>Run This User ID Only</button><span className="table-note">Uses applied range {appliedRange.start} \u2192 {appliedRange.end}</span></div><div className="agent-actions"><button className="button primary" onClick={() => void issueAgentCommand("start")} disabled={!liveStatusEnabled || !phoneReady || agent.status === "running"}><Play size={14} /> Start Full Run</button><button className="button" onClick={() => void issueAgentCommand("pause")} disabled={!liveStatusEnabled || agent.status !== "running"}><Pause size={14} /> Pause after current ID</button><button className="button" onClick={() => void issueAgentCommand("resume")} disabled={!liveStatusEnabled || !phoneReady}><Play size={14} /> Resume latest</button><button className="button" onClick={() => void issueAgentCommand("retry_pending")} disabled={!liveStatusEnabled || !phoneReady}><RefreshCw size={14} /> Retry pending</button><button className="button" onClick={() => void issueAgentCommand("restart")} disabled={!liveStatusEnabled || !phoneReady || agent.status === "running"}><RotateCcw size={14} /> Restart From Beginning</button><button className="button danger" onClick={() => void issueAgentCommand("stop_safely")} disabled={!liveStatusEnabled || agent.status !== "running"}><Square size={13} /> Stop safely</button></div></article>
+        {canUseTechnical && <section className="section-grid"><article className="card panel"><div className="panel-head"><div><h3>Android Verification Agent</h3><p>Technical controls are isolated from field accounts. Turn Live Status ON before issuing commands.</p></div><span className={`pill ${liveStatusEnabled && (agent.status === "running" || phoneReady) ? "ok" : "pending"}`}>{!liveStatusEnabled ? "Live status off" : agent.status === "disconnected" ? "Phone not connected" : agent.status}</span></div><div className="agent-state"><div className="agent-cell"><span>Total IDs</span><strong>{liveStatusEnabled ? formatCount.format(agent.total) : "\u2014"}</strong></div><div className="agent-cell"><span>Completed</span><strong>{liveStatusEnabled ? formatCount.format(agent.completed) : "\u2014"}</strong></div><div className="agent-cell"><span>Current User ID</span><strong>{agent.currentUserId ?? "—"}</strong></div><div className="agent-cell"><span>Current Stage</span><strong>{agent.currentStage ?? (liveStatusEnabled ? "Waiting for device" : "Live status disabled")}</strong></div></div><div className="agent-progress" aria-label={`${progress}% complete`}><span style={{ width: `${progress}%` }} /></div><div className="single-run-control"><input className="control" inputMode="numeric" value={singleUserId} onChange={(event) => setSingleUserId(event.target.value.replace(/\D/g, "").slice(0, 10))} placeholder="Exact 10-digit User ID for Custom Test" /><button className="button primary" onClick={() => void issueAgentCommand("single")} disabled={!liveStatusEnabled || !phoneReady || !/^\d{10}$/.test(singleUserId)}>Run This User ID Only</button><span className="table-note">Uses applied range {appliedRange.start} \u2192 {appliedRange.end}</span></div><div className="agent-actions"><button className="button" onClick={() => void prepareAndroid()} disabled={!liveStatusEnabled || agent.status === "running"}><Smartphone size={14} /> {phoneReady ? "Re-check Android" : "Prepare Android"}</button><button className="button primary" onClick={() => void issueAgentCommand("start")} disabled={!liveStatusEnabled || !phoneReady || agent.status === "running"}><Play size={14} /> Start Full Run</button><button className="button" onClick={() => void issueAgentCommand("pause")} disabled={!liveStatusEnabled || agent.status !== "running"}><Pause size={14} /> Pause after current ID</button><button className="button" onClick={() => void issueAgentCommand("resume")} disabled={!liveStatusEnabled || !phoneReady}><Play size={14} /> Resume latest</button><button className="button" onClick={() => void issueAgentCommand("retry_pending")} disabled={!liveStatusEnabled || !phoneReady}><RefreshCw size={14} /> Retry pending</button><button className="button" onClick={() => void issueAgentCommand("restart")} disabled={!liveStatusEnabled || !phoneReady || agent.status === "running"}><RotateCcw size={14} /> Restart From Beginning</button><button className="button danger" onClick={() => void issueAgentCommand("stop_safely")} disabled={!liveStatusEnabled || agent.status !== "running"}><Square size={13} /> Stop safely</button></div></article>
           <article className="card panel"><div className="panel-head"><div><h3>Exception Queue</h3><p>Detector/manual-review failures do not masquerade as network retries.</p></div><AlertTriangle size={19} color="#b77820" /></div><div className="queue-list"><div className="queue-row"><span>Password issue</span><strong className="amber">{agent.passwordPending}</strong></div><div className="queue-row"><span>Network/server pending</span><strong className="amber">{agent.networkPending}</strong></div><div className="queue-row"><span>Currently running</span><strong>{agent.running}</strong></div><div className="queue-row"><span>Live Status</span><strong>{liveStatusEnabled ? "ON" : "OFF"}</strong></div></div></article></section>}
         {activeView === "passport" && <PassportPanel items={passportItems} busy={passportBusy} canUpdate={canUpdatePassport} canVerify={canVerifyPassport} referenceDrafts={passportReferenceDrafts} noteDrafts={passportNoteDrafts} onReference={(id, value) => setPassportReferenceDrafts((current) => ({ ...current, [id]: value }))} onNote={(id, value) => setPassportNoteDrafts((current) => ({ ...current, [id]: value }))} onSave={(item) => void savePassport(item)} onVerify={(item) => void verifyPassport(item)} onRefresh={() => void loadPassportWorkflow()} />}
         {activeView === "access" && canManageAccess && <AccessPanel items={accessItems} drafts={accessRoleDrafts} busy={accessBusy} onRole={(id, role) => setAccessRoleDrafts((current) => ({ ...current, [id]: role }))} onApprove={(item) => void approveOfficer(item)} onActive={(item, active) => void setOfficerActive(item, active)} onRefresh={() => void loadAccessRequests()} />}

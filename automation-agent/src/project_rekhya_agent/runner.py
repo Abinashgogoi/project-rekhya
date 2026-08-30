@@ -444,7 +444,11 @@ class AgentRunner:
         name = command["command"]
         run_id = command.get("run_id")
 
-        if name == "start":
+        if name == "prepare":
+            # Website-triggered preparation. preflight() updates cloud heartbeat
+            # with exact Android/ADB/SIM/app readiness and starts Appium if needed.
+            self.preflight()
+        elif name == "start":
             if not run_id:
                 raise RuntimeError("Start command has no verification run")
             self._start_run(run_id)
