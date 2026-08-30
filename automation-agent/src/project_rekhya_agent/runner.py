@@ -37,7 +37,13 @@ class AgentRunner:
         self.current_worker_id: str | None = None
 
     def preflight(self):
-        result = self.device.preflight(self.settings.android_package)
+        try:
+            result = self.device.preflight(self.settings.android_package)
+        except Exception as error:
+            result = PreflightResult(
+                False, False, False, False, False, self.settings.device_serial,
+                (f"ADB PREFLIGHT ERROR: {type(error).__name__}: {error}",),
+            )
         problems = list(result.problems)
 
         try:
