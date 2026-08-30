@@ -311,21 +311,10 @@ class CloudClient:
         resumable: bool = True,
         state: dict[str, Any] | None = None,
     ):
-        existing = (
-            self.client.table("verification_checkpoints")
-            .select("sequence_no")
-            .eq("job_id", job_id)
-            .order("sequence_no", desc=True)
-            .limit(1)
-            .execute()
-            .data
-        )
-        sequence_no = (int(existing[0]["sequence_no"]) + 1) if existing else 1
         self.client.table("verification_checkpoints").insert({
             "run_id": run_id,
             "job_id": job_id,
             "worker_id": worker_id,
-            "sequence_no": sequence_no,
             "stage": stage,
             "app_location": app_location,
             "displayed_user_id": displayed_user_id,

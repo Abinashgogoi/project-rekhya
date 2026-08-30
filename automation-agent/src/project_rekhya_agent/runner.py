@@ -549,17 +549,40 @@ class AgentRunner:
 
     def command_loop(self):
         while not self.service_stop.is_set():
-            command = self.cloud.next_command()
+            try:
+                command = self.cloud.next_command()
+            except Exception as error:
+                print(
+                    f"[Project Rekhya] Cloud command poll interrupted: {type(error).__name__}: {error}",
+                    flush=True,
+                )
+                try:
+                    self.cloud.heartbeat(
+                        cloud_sync_connected=False,
+                        current_stage=f"Cloud command poll interrupted: {type(error).__name__}: {error}",
+                        heartbeat_at="now()",
+                    )
+                except Exception:
+                    pass
+                self.service_stop.wait(2)
+                continue
+
             if not command:
                 sleep(2)
                 continue
 
-            self.cloud.accept_command(command["id"])
             try:
-                self.handle_command(command)
-                self.cloud.complete_command(command["id"])
+                self.cloud.accept_command(command["id"])
+                try:
+                    self.handle_command(command)
+                    self.cloud.complete_command(command["id"])
+                except Exception as error:
+                    self.cloud.complete_command(command["id"], str(error))
             except Exception as error:
-                self.cloud.complete_command(command["id"], str(error))
+                print(
+                    f"[Project Rekhya] Command processing cloud I/O interrupted: {type(error).__name__}: {error}",
+                    flush=True,
+                )
             sleep(1)
 
     def device_health_loop(self):
