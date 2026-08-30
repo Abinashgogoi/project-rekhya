@@ -667,6 +667,15 @@ class AppiumFlow:
 
 
     def _recover_authenticated_dashboard(self) -> bool:
+        # Login/onboarding is explicitly unauthenticated. Never mistake a
+        # generic PMFBY title on this screen for an Unpaid-list checkpoint.
+        try:
+            if self._find_optional("pmfby_landing_text", timeout=1) is not None:
+                self._report("PMFBY login landing detected - authenticated recovery skipped")
+                return False
+        except Exception:
+            pass
+
         # Fast path: already on the authenticated dashboard.
         try:
             if self._find_optional("dashboard_menu", timeout=2) is not None:
@@ -675,13 +684,16 @@ class AppiumFlow:
             pass
 
         # If USB was lost while reading the Unpaid list, return only to the
-        # nearest safe authenticated checkpoint. Do not restart SIM/login.
+        # nearest safe authenticated checkpoint. A generic tv_title is not
+        # sufficient because PMFBY onboarding also uses tv_title.
         unpaid_screen = False
         try:
-            unpaid_screen = (
-                self._find_optional("unpaid_list_header_count", timeout=2)
-                is not None
-            )
+            if self._find_optional("unpaid_list", timeout=1) is not None:
+                unpaid_screen = True
+            else:
+                title = self._find_optional("unpaid_list_header_count", timeout=1)
+                title_text = ((title.text or "").strip().lower()) if title is not None else ""
+                unpaid_screen = "unpaid" in title_text
         except Exception:
             unpaid_screen = False
 

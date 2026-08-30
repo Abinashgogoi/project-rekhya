@@ -100,3 +100,45 @@ def test_unpaid_scroll_captures_every_viewport_before_reading_cards():
     assert '"Unpaid_List_{page_number:02d}"' in source
     assert "if len(records) != expected_total:" in source
     assert "DETECTOR COUNT MISMATCH" in source
+
+
+def test_authenticated_recovery_skips_login_landing():
+    flow = object.__new__(AppiumFlow)
+    stages = []
+
+    class FakeElement:
+        text = "Login to continue"
+
+    def fake_find_optional(key, timeout=2):
+        if key == "pmfby_landing_text":
+            return FakeElement()
+        raise AssertionError(f"Recovery must not probe {key} after login landing is detected")
+
+    flow._find_optional = fake_find_optional
+    flow._report = stages.append
+
+    assert flow._recover_authenticated_dashboard() is False
+    assert stages == ["PMFBY login landing detected - authenticated recovery skipped"]
+
+
+def test_authenticated_recovery_rejects_generic_tv_title():
+    flow = object.__new__(AppiumFlow)
+
+    class GenericTitle:
+        text = "Simplifying Insurance Management"
+
+    def fake_find_optional(key, timeout=2):
+        if key == "pmfby_landing_text":
+            return None
+        if key == "dashboard_menu":
+            return None
+        if key == "unpaid_list":
+            return None
+        if key == "unpaid_list_header_count":
+            return GenericTitle()
+        return None
+
+    flow._find_optional = fake_find_optional
+    flow._report = lambda stage: None
+
+    assert flow._recover_authenticated_dashboard() is False
