@@ -30,12 +30,15 @@ if [[ "${1:-}" == "--dry-run" ]]; then
   exit 0
 fi
 
-if [[ -z "${CREDENTIAL_ENCRYPTION_KEY:-}" ]]; then
-  echo "Missing required secret environment variable: CREDENTIAL_ENCRYPTION_KEY" >&2
+npx wrangler "${deploy_args[@]}"
+
+# Credential encryption key continuity is intentionally managed outside normal
+# deployments. --keep-vars preserves the existing Worker secret. Rotating or
+# replacing CREDENTIAL_ENCRYPTION_KEY must be an explicit maintenance action
+# followed by credential re-encryption, never an automatic deploy side effect.
+if ! npx wrangler secret list --config "${config_path}" --name "${project_name}" | grep -q '"CREDENTIAL_ENCRYPTION_KEY"'; then
+  echo "Required Worker secret CREDENTIAL_ENCRYPTION_KEY is missing." >&2
   exit 2
 fi
 
-npx wrangler "${deploy_args[@]}"
-printf '%s' "${CREDENTIAL_ENCRYPTION_KEY}" | npx wrangler secret put CREDENTIAL_ENCRYPTION_KEY --config "${config_path}" --name "${project_name}"
-
-echo "Project Rekhya deployed to Cloudflare Worker ${project_name}."
+echo "Project Rekhya deployed to Cloudflare Worker ${project_name} without rotating credential secrets."

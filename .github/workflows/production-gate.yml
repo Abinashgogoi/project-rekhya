@@ -44,6 +44,9 @@ jobs:
       - name: Validate built Cloudflare artifact
         run: npm run validate:artifact
 
+      - name: Guard credential secret continuity
+        run: python scripts/validate-deploy-secret-safety.py
+
   android-agent:
     name: Android agent gate
     runs-on: ubuntu-latest
