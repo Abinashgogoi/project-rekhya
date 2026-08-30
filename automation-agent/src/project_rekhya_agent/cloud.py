@@ -131,12 +131,21 @@ class CloudClient:
     def retry_pending_jobs(self, run_id: str | None):
         query = (
             self.client.table("verification_jobs")
-            .update({"status": "queued", "final_retry_attempted": True})
+            .update({
+                "status": "queued",
+                "final_retry_attempted": True,
+                "completed_at": None,
+                "error_message": None,
+            })
             .eq("status", "pending")
+            .eq("final_retry_attempted", False)
         )
         if run_id:
             query = query.eq("run_id", run_id)
-        return query.execute().data
+        rows = query.execute().data
+        if not rows:
+            raise RuntimeError("No pending verification jobs remain eligible for the one final retry")
+        return rows
 
     def update_job(self, job_id: str, values: dict[str, Any]):
         self.client.table("verification_jobs").update(self._timestamps(values)).eq("id", job_id).execute()
@@ -202,6 +211,81 @@ class CloudClient:
             "storage_path": remote_path,
             "object_key": remote_path,
         }
+
+    def persist_captured_evidence(
+        self,
+        *,
+        run_id: str,
+        job_id: str,
+        worker_id: str,
+        paths: list[Path],
+    ):
+        seen_paths: set[Path] = set()
+        for path in paths:
+            path = Path(path)
+            if path in seen_paths or not path.exists():
+                continue
+            seen_paths.add(path)
+
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            remote_path = f"{run_id}/{worker_id}/{path.name}"
+            try:
+                storage_meta = self.upload_evidence(path, remote_path, "image/png")
+            except Exception as error:
+                if "already exists" not in str(error).lower() and "duplicate" not in str(error).lower():
+                    raise
+                storage_meta = {
+                    "storage_provider": self.evidence_provider,
+                    "storage_bucket": self.gcs_bucket_name if self.evidence_provider == "google_cloud_storage" else "project-rekhya-evidence",
+                    "storage_path": remote_path,
+                    "object_key": remote_path,
+                }
+
+            category = "unpaid-list"
+            lowered = str(path).lower()
+            if "identity" in lowered:
+                category = "identity"
+            elif "dashboard" in lowered:
+                category = "dashboard"
+            elif "error" in lowered:
+                category = "errors"
+
+            self.client.table("evidence_files").upsert({
+                "worker_id": worker_id,
+                "run_id": run_id,
+                "job_id": job_id,
+                "category": category,
+                "storage_provider": storage_meta["storage_provider"],
+                "storage_bucket": storage_meta["storage_bucket"],
+                "storage_path": storage_meta["storage_path"],
+                "object_key": storage_meta["object_key"],
+                "file_size_bytes": path.stat().st_size,
+                "run_scope": "current",
+                "original_filename": path.name,
+                "mime_type": "image/png",
+                "sha256": digest,
+                "metadata": {"source": "automation-agent"},
+            }, on_conflict="storage_path").execute()
+
+    def finalize_run_status(self, run_id: str, *, stopped: bool = False) -> str:
+        if stopped:
+            final_status = "stopped"
+        else:
+            rows = (
+                self.client.table("verification_jobs")
+                .select("status")
+                .eq("run_id", run_id)
+                .execute()
+                .data
+            )
+            statuses = {row["status"] for row in rows}
+            final_status = "ok" if statuses and statuses <= {"ok"} else "pending"
+
+        self.update_run(run_id, {
+            "status": final_status,
+            "completed_at": "now()",
+        })
+        return final_status
 
     def save_checkpoint(
         self,
@@ -310,48 +394,9 @@ class CloudClient:
         # Upload every captured screenshot once, not just card-linked images.
         candidates = [Path(value) for value in result.metadata.get("evidence_paths", [])]
         candidates.extend(Path(record.evidence_path) for record in result.records)
-        seen_paths: set[Path] = set()
-        for path in candidates:
-            if path in seen_paths or not path.exists():
-                continue
-            seen_paths.add(path)
-
-            digest = hashlib.sha256(path.read_bytes()).hexdigest()
-            remote_path = f"{run_id}/{worker_id}/{path.name}"
-            try:
-                storage_meta = self.upload_evidence(path, remote_path, "image/png")
-            except Exception as error:
-                if "already exists" not in str(error).lower() and "duplicate" not in str(error).lower():
-                    raise
-                storage_meta = {
-                    "storage_provider": self.evidence_provider,
-                    "storage_bucket": self.gcs_bucket_name if self.evidence_provider == "google_cloud_storage" else "project-rekhya-evidence",
-                    "storage_path": remote_path,
-                    "object_key": remote_path,
-                }
-
-            category = "unpaid-list"
-            lowered = str(path).lower()
-            if "identity" in lowered:
-                category = "identity"
-            elif "dashboard" in lowered:
-                category = "dashboard"
-            elif "error" in lowered:
-                category = "errors"
-
-            self.client.table("evidence_files").upsert({
-                "worker_id": worker_id,
-                "run_id": run_id,
-                "job_id": job_id,
-                "category": category,
-                "storage_provider": storage_meta["storage_provider"],
-                "storage_bucket": storage_meta["storage_bucket"],
-                "storage_path": storage_meta["storage_path"],
-                "object_key": storage_meta["object_key"],
-                "file_size_bytes": path.stat().st_size,
-                "run_scope": "current",
-                "original_filename": path.name,
-                "mime_type": "image/png",
-                "sha256": digest,
-                "metadata": {"source": "automation-agent"},
-            }, on_conflict="storage_path").execute()
+        self.persist_captured_evidence(
+            run_id=run_id,
+            job_id=job_id,
+            worker_id=worker_id,
+            paths=candidates,
+        )

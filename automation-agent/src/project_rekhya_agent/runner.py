@@ -245,6 +245,15 @@ class AgentRunner:
 
                     except ManualReviewRequired as error:
                         message = str(error)
+                        try:
+                            self.cloud.persist_captured_evidence(
+                                run_id=run_id,
+                                job_id=job["id"],
+                                worker_id=worker["id"],
+                                paths=list(flow.captured_evidence_paths),
+                            )
+                        except Exception as evidence_error:
+                            message = f"{message}; evidence upload error: {evidence_error}"
                         lowered = message.lower()
                         issue_type = (
                             "count_mismatch"
@@ -279,6 +288,15 @@ class AgentRunner:
 
                     except AutomationSetupError as error:
                         setup_error = str(error)
+                        try:
+                            self.cloud.persist_captured_evidence(
+                                run_id=run_id,
+                                job_id=job["id"],
+                                worker_id=worker["id"],
+                                paths=list(flow.captured_evidence_paths),
+                            )
+                        except Exception as evidence_error:
+                            setup_error = f"{setup_error}; evidence upload error: {evidence_error}"
                         self.report_stage(
                             job["id"],
                             worker["user_id"],
@@ -385,18 +403,54 @@ class AgentRunner:
                 if not setup_error:
                     try:
                         flow.logout()
-                    except Exception:
-                        pass
+                    except Exception as logout_error:
+                        setup_error = (
+                            f"LOGOUT VERIFICATION FAILED after User ID "
+                            f"{worker['user_id']}: {logout_error}"
+                        )
+                        try:
+                            self.cloud.persist_captured_evidence(
+                                run_id=run_id,
+                                job_id=job["id"],
+                                worker_id=worker["id"],
+                                paths=list(flow.captured_evidence_paths),
+                            )
+                        except Exception:
+                            pass
+                        try:
+                            self.cloud.save_checkpoint(
+                                run_id=run_id,
+                                job_id=job["id"],
+                                worker_id=worker["id"],
+                                stage="logout_failed",
+                                app_location="pmfby_authenticated_session",
+                                displayed_user_id=worker["user_id"],
+                                last_completed_action="account data collection",
+                                next_action="verify logout before continuing batch",
+                                interruption_reason=setup_error,
+                                resumable=False,
+                                state={"next_user_blocked": True},
+                            )
+                        except Exception:
+                            pass
+                        self.cloud.heartbeat(
+                            status="paused",
+                            current_stage=setup_error,
+                            running_ids=0,
+                        )
+                        self.stop_event.set()
 
                 self.cloud.refresh_agent_counts(run_id)
 
+                if setup_error:
+                    break
+
         finally:
             flow.close()
-            final_status = "stopped" if self.stop_event.is_set() else "ok"
-            self.cloud.update_run(run_id, {
-                "status": final_status,
-                "completed_at": "now()",
-            })
+            self.cloud.finalize_run_status(
+                run_id,
+                stopped=self.stop_event.is_set(),
+            )
             self.cloud.heartbeat(
                 status="paused" if setup_error else "idle",
                 running_ids=0,
