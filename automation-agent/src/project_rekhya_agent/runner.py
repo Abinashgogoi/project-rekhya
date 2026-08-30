@@ -231,6 +231,16 @@ class AgentRunner:
                             summary=summary,
                             status=status,
                         )
+                        self.cloud.assert_app_result_visible(
+                            run_id=run_id,
+                            job_id=job["id"],
+                            worker_id=worker["id"],
+                            user_id=worker["user_id"],
+                            start_date=start_date,
+                            end_date=end_date,
+                            summary=summary,
+                            status=status,
+                        )
 
                         self.cloud.update_job(job["id"], {
                             "status": status,

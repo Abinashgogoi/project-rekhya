@@ -337,6 +337,90 @@ class CloudClient:
         )
         return rows[0] if rows else None
 
+    def assert_app_result_visible(
+        self,
+        *,
+        run_id: str,
+        job_id: str,
+        worker_id: str,
+        user_id: str,
+        start_date,
+        end_date,
+        summary: CountSummary,
+        status: str,
+    ):
+        expected_app_entry = int(summary.normal_total) + int(summary.high_total)
+
+        summary_rows = (
+            self.client.table("app_summaries")
+            .select("normal_total,high_total,status")
+            .eq("run_id", run_id)
+            .eq("worker_id", worker_id)
+            .eq("start_date", start_date.isoformat())
+            .eq("end_date", end_date.isoformat())
+            .execute()
+            .data
+        )
+        if len(summary_rows) != 1:
+            raise RuntimeError(
+                f"REPORT PERSISTENCE FAILURE: expected exactly one app summary, found {len(summary_rows)}"
+            )
+
+        saved = summary_rows[0]
+        if (
+            int(saved.get("normal_total") or 0) != int(summary.normal_total)
+            or int(saved.get("high_total") or 0) != int(summary.high_total)
+            or str(saved.get("status") or "") != str(status)
+        ):
+            raise RuntimeError(
+                "REPORT PERSISTENCE FAILURE: saved app summary does not match classified result"
+            )
+
+        record_rows = (
+            self.client.table("app_records")
+            .select("id")
+            .eq("job_id", job_id)
+            .execute()
+            .data
+        )
+        expected_records = expected_app_entry + int(summary.pre_cutoff_count)
+        if len(record_rows) != expected_records:
+            raise RuntimeError(
+                f"REPORT PERSISTENCE FAILURE: app record count {len(record_rows)} "
+                f"does not match classified total {expected_records}"
+            )
+
+        report_rows = (
+            self.client.rpc(
+                "get_reconciliation_report",
+                {
+                    "p_start": start_date.isoformat(),
+                    "p_end": end_date.isoformat(),
+                    "p_block": None,
+                    "p_group": None,
+                    "p_search": user_id,
+                },
+            )
+            .execute()
+            .data
+        )
+        exact = [row for row in report_rows if str(row.get("user_id")) == str(user_id)]
+        if len(exact) != 1:
+            raise RuntimeError(
+                f"REPORT VISIBILITY FAILURE: expected one report row for User ID {user_id}, found {len(exact)}"
+            )
+
+        row = exact[0]
+        if (
+            int(row.get("app_entry") or 0) != expected_app_entry
+            or int(row.get("high_entry") or 0) != int(summary.high_total)
+        ):
+            raise RuntimeError(
+                f"REPORT VISIBILITY FAILURE: report shows app_entry={row.get('app_entry')} "
+                f"high_entry={row.get('high_entry')} but expected "
+                f"app_entry={expected_app_entry} high_entry={int(summary.high_total)}"
+            )
+
     def persist_app_result(
         self,
         *,
