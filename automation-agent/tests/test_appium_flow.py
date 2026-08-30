@@ -88,3 +88,15 @@ def test_physically_calibrated_dashboard_cycle_selectors():
             "by": "id",
             "value": resource_id,
         }
+
+
+def test_unpaid_scroll_captures_every_viewport_before_reading_cards():
+    import inspect
+    source = inspect.getsource(AppiumFlow._scroll_unpaid_records)
+    shot = source.index("self._shot(")
+    read = source.index("self._visible_record_cards(")
+    scroll = source.index('"mobile: scrollGesture"')
+    assert shot < read < scroll
+    assert '"Unpaid_List_{page_number:02d}"' in source
+    assert "if len(records) != expected_total:" in source
+    assert "DETECTOR COUNT MISMATCH" in source

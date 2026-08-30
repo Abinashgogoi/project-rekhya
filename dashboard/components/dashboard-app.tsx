@@ -3,7 +3,7 @@
 import {
   Activity, AlertTriangle, Bot, CheckCircle2, ChevronDown, CircleDollarSign, Database, Download, Eye,
   FileSpreadsheet, FolderOpen, Gauge, HardDriveUpload, KeyRound, ListFilter, Menu, Pause, Play, RefreshCw,
-  RotateCcw, Search, ShieldCheck, Smartphone, Square, Trash2, UsersRound, X,
+  RotateCcw, Search, ShieldCheck, Smartphone, Square, Trash2, UsersRound, X, ZoomIn, ZoomOut, Maximize2,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
@@ -182,6 +182,10 @@ function OperationalDashboard({ session, profile, developmentShell }: { session:
   const [evidenceScope, setEvidenceScope] = useState<"current" | "previous" | "all">("current");
   const [evidencePreviewBusy, setEvidencePreviewBusy] = useState<string | null>(null);
   const [evidenceFullscreen, setEvidenceFullscreen] = useState<EvidenceItem | null>(null);
+  const [evidenceZoom, setEvidenceZoom] = useState(1);
+  const [evidencePan, setEvidencePan] = useState({ x: 0, y: 0 });
+  const evidencePointers = useRef<Map<number, { x: number; y: number }>>(new Map());
+  const evidencePinch = useRef<{ distance: number; zoom: number } | null>(null);
   const [accessItems, setAccessItems] = useState<OfficerAccessItem[]>([]);
   const [accessRoleDrafts, setAccessRoleDrafts] = useState<Record<string, string>>({});
   const [accessBusy, setAccessBusy] = useState(false);
@@ -508,6 +512,87 @@ function OperationalDashboard({ session, profile, developmentShell }: { session:
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Report export failed."); }
     finally { setExportBusy(false); }
   }
+  const resetEvidenceView = useCallback(() => {
+    setEvidenceZoom(1);
+    setEvidencePan({ x: 0, y: 0 });
+    evidencePointers.current.clear();
+    evidencePinch.current = null;
+  }, []);
+
+  const changeEvidenceZoom = useCallback((delta: number) => {
+    setEvidenceZoom((current) => {
+      const next = Math.min(5, Math.max(1, Math.round((current + delta) * 100) / 100));
+      if (next === 1) setEvidencePan({ x: 0, y: 0 });
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!evidenceFullscreen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setEvidenceFullscreen(null);
+        resetEvidenceView();
+      } else if (event.key === "+" || event.key === "=") {
+        event.preventDefault();
+        changeEvidenceZoom(0.25);
+      } else if (event.key === "-") {
+        event.preventDefault();
+        changeEvidenceZoom(-0.25);
+      } else if (event.key === "0") {
+        event.preventDefault();
+        resetEvidenceView();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [changeEvidenceZoom, evidenceFullscreen, resetEvidenceView]);
+
+  function handleEvidencePointerDown(event: React.PointerEvent<HTMLDivElement>) {
+    event.currentTarget.setPointerCapture(event.pointerId);
+    evidencePointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    const points = [...evidencePointers.current.values()];
+    if (points.length === 2) {
+      evidencePinch.current = {
+        distance: Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y),
+        zoom: evidenceZoom,
+      };
+    }
+  }
+
+  function handleEvidencePointerMove(event: React.PointerEvent<HTMLDivElement>) {
+    const previous = evidencePointers.current.get(event.pointerId);
+    if (!previous) return;
+    evidencePointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    const points = [...evidencePointers.current.values()];
+    if (points.length >= 2 && evidencePinch.current) {
+      const distance = Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
+      if (evidencePinch.current.distance > 0) {
+        const next = Math.min(5, Math.max(1, evidencePinch.current.zoom * distance / evidencePinch.current.distance));
+        setEvidenceZoom(next);
+        if (next === 1) setEvidencePan({ x: 0, y: 0 });
+      }
+      return;
+    }
+    if (points.length === 1 && evidenceZoom > 1) {
+      setEvidencePan((current) => ({
+        x: current.x + event.clientX - previous.x,
+        y: current.y + event.clientY - previous.y,
+      }));
+    }
+  }
+
+  function handleEvidencePointerEnd(event: React.PointerEvent<HTMLDivElement>) {
+    evidencePointers.current.delete(event.pointerId);
+    try { event.currentTarget.releasePointerCapture(event.pointerId); } catch {}
+    if (evidencePointers.current.size < 2) evidencePinch.current = null;
+  }
+
+  function handleEvidenceWheel(event: React.WheelEvent<HTMLDivElement>) {
+    event.preventDefault();
+    changeEvidenceZoom(event.deltaY < 0 ? 0.2 : -0.2);
+  }
+
   async function loadEvidence(row: ReconciliationRow, scope: "current" | "previous" | "all" = evidenceScope) {
     if (!supabase || !session) return;
     setEvidenceItems((current) => {
@@ -533,6 +618,7 @@ function OperationalDashboard({ session, profile, developmentShell }: { session:
 
   function closeEvidence() {
     setEvidenceFullscreen(null);
+    resetEvidenceView();
     for (const item of evidenceItems) if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
     setEvidenceItems([]);
     setEvidenceOpen(null);
@@ -542,6 +628,7 @@ function OperationalDashboard({ session, profile, developmentShell }: { session:
     if (!session) return;
 
     if (item.previewUrl) {
+      resetEvidenceView();
       setEvidenceFullscreen(item);
       return;
     }
@@ -566,6 +653,7 @@ function OperationalDashboard({ session, profile, developmentShell }: { session:
       setEvidenceItems((current) =>
         current.map((entry) => entry.id === item.id ? opened : entry)
       );
+      resetEvidenceView();
       setEvidenceFullscreen(opened);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Evidence could not be opened.");
@@ -983,19 +1071,35 @@ function OperationalDashboard({ session, profile, developmentShell }: { session:
     </div>
     {!!preparedImports.length && <div className="modal-backdrop" role="presentation"><section className="modal-card import-review-modal" role="dialog" aria-modal="true" aria-labelledby="import-review-title"><div className="modal-head"><div><h3 id="import-review-title">Review and confirm files</h3><p>Validation passed, but nothing has been imported yet. Confirm only after checking the filename, sheet, columns and sample User IDs.</p></div><button className="icon-button" aria-label="Cancel import review" onClick={() => { setPreparedImports([]); setImportStatus("Import cancelled. No data was added."); }}><X size={18} /></button></div><div className="notice warning"><strong>Final check before upload:</strong> Master files control the User ID/password scope used by the Android bot. Portal files add transaction counts only for active Master User IDs.</div><div className="import-review-list">{preparedImports.map((item) => <article className="import-review-card" key={item.key}><div className="import-review-title"><div><span className="pill pending">{item.sourceType === "master" ? "Master ID / Password" : "Portal TXN"}</span><h4>{item.fileName}</h4><p>{(item.fileSize / 1024).toFixed(1)} KB · Sheet: {item.worksheetName}</p></div><CheckCircle2 size={22} color="#267346" /></div><div className="import-review-stats"><span><small>Rows read</small><strong>{formatCount.format(item.rowCount)}</strong></span><span><small>Accepted</small><strong>{formatCount.format(item.acceptedRows)}</strong></span><span><small>Outside scope</small><strong>{formatCount.format(item.ignoredOutOfScope)}</strong></span><span><small>Warnings</small><strong>{formatCount.format(item.warningCount)}</strong></span></div><p><strong>Detected dates:</strong> {item.detectedStartDate && item.detectedEndDate ? `${item.detectedStartDate} → ${item.detectedEndDate}` : "Not applicable for Master identity data"}</p><p><strong>Sample User IDs:</strong> {item.sampleUserIds.join(", ") || "None detected"}</p><div className="header-map"><strong>Detected Excel columns</strong>{Object.entries(item.headerMap).map(([field, header]) => <span key={field}><code>{field}</code><i>←</i>{header}</span>)}</div></article>)}</div><div className="modal-actions"><span>{preparedImports.length} validated file(s) · not imported yet</span><div className="report-actions"><button className="button" disabled={importBusy} onClick={() => { setPreparedImports([]); setImportStatus("Import cancelled. No data was added."); }}>Cancel</button><button className="button primary" disabled={importBusy} onClick={() => void confirmPreparedImports()}><HardDriveUpload size={15} /> {importBusy ? "Importing…" : "Confirm and import"}</button></div></div></section></div>}
     {exportOpen && <div className="modal-backdrop" role="presentation" onMouseDown={() => setExportOpen(false)}><section className="modal-card" role="dialog" aria-modal="true" aria-labelledby="export-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-head"><div><h3 id="export-title">Excel export</h3><p>The export uses the current filters and inclusive date range.</p></div><button className="icon-button" aria-label="Close export options" onClick={() => setExportOpen(false)}><X size={18} /></button></div><div className="export-presets"><button className="button" onClick={() => setExportColumns(exportOptions.map((option) => option.key))}>Full &amp; Final</button><button className="button" onClick={() => setExportColumns(["serial_no", "name", "user_id", "password", "portal_entry", "app_entry", "high_entry"])}>Core combined</button><button className="button" onClick={() => setExportColumns([])}>Clear selection</button></div><div className="export-grid">{exportOptions.map((option) => <label className="check-row" key={option.key}><input type="checkbox" checked={exportColumns.includes(option.key)} onChange={(event) => setExportColumns((current) => event.target.checked ? [...current, option.key] : current.filter((column) => column !== option.key))} /><span>{option.label}</span></label>)}</div><div className="modal-actions"><span>{exportColumns.length} column(s) selected</span><button className="button primary" disabled={!exportColumns.length || exportBusy} onClick={() => void downloadReport()}><Download size={15} /> {exportBusy ? "Preparing securely…" : "Download Excel"}</button></div></section></div>}
-    {evidenceOpen && <div className="modal-backdrop" role="presentation" onMouseDown={closeEvidence}><section className="modal-card evidence-modal" role="dialog" aria-modal="true" aria-labelledby="evidence-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-head"><div><h3 id="evidence-title">Evidence — {evidenceOpen.user_id}</h3><p>{evidenceOpen.name} · protected evidence is fetched only after an authorized officer opens an item.</p></div><button className="icon-button" aria-label="Close evidence" onClick={closeEvidence}><X size={18} /></button></div><div className="evidence-scope"><button className={`button ${evidenceScope === "current" ? "primary" : ""}`} onClick={() => { setEvidenceScope("current"); void loadEvidence(evidenceOpen, "current"); }}>Current run</button><button className={`button ${evidenceScope === "previous" ? "primary" : ""}`} onClick={() => { setEvidenceScope("previous"); void loadEvidence(evidenceOpen, "previous"); }}>Previous runs</button><button className={`button ${evidenceScope === "all" ? "primary" : ""}`} onClick={() => { setEvidenceScope("all"); void loadEvidence(evidenceOpen, "all"); }}>All</button></div>{evidenceBusy ? <div className="empty"><RefreshCw className="spin" size={22} /><strong>Loading evidence index…</strong></div> : !evidenceItems.length ? <div className="empty"><HardDriveUpload size={24} /><strong>No screenshot evidence is stored for this selection.</strong><span>{issueLabel(evidenceOpen) ?? "No captured app evidence is available for this verification state."}</span></div> : <div className="evidence-grid">{evidenceItems.map((item) => <article className="evidence-card" key={item.id}>{item.mime_type.startsWith("image/") && item.previewUrl ? <button type="button" className="evidence-thumb-button" aria-label={`View ${item.original_filename} full size`} onClick={() => void loadEvidencePreview(item)}><Image unoptimized width={320} height={200} src={item.previewUrl} alt={`${item.category} evidence for ${evidenceOpen.user_id}`} /></button> : <div className="evidence-file"><FileSpreadsheet size={28} /></div>}<div><div className="evidence-badges"><span className="pill ok">{item.category.replaceAll("_", " ")}</span><span className="pill pending">{item.run_scope}</span></div><h4>{item.original_filename}</h4><p>{new Date(item.captured_at).toLocaleString()} · {item.storage_provider.replaceAll("_", " ")}</p><button className="button" disabled={evidencePreviewBusy === item.id} onClick={() => void loadEvidencePreview(item)}><Eye size={14} /> {item.previewUrl ? "View full size" : evidencePreviewBusy === item.id ? "Openingâ€¦" : "Open & view full size"}</button></div></article>)}</div>}</section></div>}    {evidenceFullscreen?.previewUrl && <div className="evidence-lightbox" role="presentation" onMouseDown={() => setEvidenceFullscreen(null)}>
-      <section className="evidence-lightbox-card" role="dialog" aria-modal="true" aria-label={`Full size evidence ${evidenceFullscreen.original_filename}`} onMouseDown={(event) => event.stopPropagation()}>
+    {evidenceOpen && <div className="modal-backdrop" role="presentation" onMouseDown={closeEvidence}><section className="modal-card evidence-modal" role="dialog" aria-modal="true" aria-labelledby="evidence-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-head"><div><h3 id="evidence-title">Evidence — {evidenceOpen.user_id}</h3><p>{evidenceOpen.name} · protected evidence is fetched only after an authorized officer opens an item.</p></div><button className="icon-button" aria-label="Close evidence" onClick={closeEvidence}><X size={18} /></button></div><div className="evidence-scope"><button className={`button ${evidenceScope === "current" ? "primary" : ""}`} onClick={() => { setEvidenceScope("current"); void loadEvidence(evidenceOpen, "current"); }}>Current run</button><button className={`button ${evidenceScope === "previous" ? "primary" : ""}`} onClick={() => { setEvidenceScope("previous"); void loadEvidence(evidenceOpen, "previous"); }}>Previous runs</button><button className={`button ${evidenceScope === "all" ? "primary" : ""}`} onClick={() => { setEvidenceScope("all"); void loadEvidence(evidenceOpen, "all"); }}>All</button></div>{evidenceBusy ? <div className="empty"><RefreshCw className="spin" size={22} /><strong>Loading evidence index…</strong></div> : !evidenceItems.length ? <div className="empty"><HardDriveUpload size={24} /><strong>No screenshot evidence is stored for this selection.</strong><span>{issueLabel(evidenceOpen) ?? "No captured app evidence is available for this verification state."}</span></div> : <div className="evidence-grid">{evidenceItems.map((item) => <article className="evidence-card" key={item.id}>{item.mime_type.startsWith("image/") && item.previewUrl ? <button type="button" className="evidence-thumb-button" aria-label={`View ${item.original_filename} full size`} onClick={() => void loadEvidencePreview(item)}><Image unoptimized width={320} height={200} src={item.previewUrl} alt={`${item.category} evidence for ${evidenceOpen.user_id}`} /></button> : <div className="evidence-file"><FileSpreadsheet size={28} /></div>}<div><div className="evidence-badges"><span className="pill ok">{item.category.replaceAll("_", " ")}</span><span className="pill pending">{item.run_scope}</span></div><h4>{item.original_filename}</h4><p>{new Date(item.captured_at).toLocaleString()} · {item.storage_provider.replaceAll("_", " ")}</p><button className="button" disabled={evidencePreviewBusy === item.id} onClick={() => void loadEvidencePreview(item)}><Eye size={14} /> {item.previewUrl ? "View full size" : evidencePreviewBusy === item.id ? "Openingâ€¦" : "Open & view full size"}</button></div></article>)}</div>}</section></div>}    {evidenceFullscreen?.previewUrl && <div className="evidence-lightbox" role="presentation" onMouseDown={() => { setEvidenceFullscreen(null); resetEvidenceView(); }}>
+      <section className="evidence-lightbox-card" role="dialog" aria-modal="true" aria-label={`Evidence viewer ${evidenceFullscreen.original_filename}`} onMouseDown={(event) => event.stopPropagation()}>
         <div className="evidence-lightbox-head">
           <div>
             <strong>{evidenceFullscreen.original_filename}</strong>
             <span>{evidenceFullscreen.category.replaceAll("_", " ")} Â· {new Date(evidenceFullscreen.captured_at).toLocaleString()}</span>
           </div>
-          <button className="icon-button" aria-label="Close full size evidence" onClick={() => setEvidenceFullscreen(null)}><X size={18} /></button>
+          <div className="evidence-viewer-actions" aria-label="Evidence zoom controls">
+            <button className="icon-button" aria-label="Zoom out" title="Zoom out (-)" disabled={evidenceZoom <= 1} onClick={() => changeEvidenceZoom(-0.25)}><ZoomOut size={18} /></button>
+            <button className="evidence-zoom-value" type="button" aria-label="Reset evidence to fit screen" title="Fit to screen (0)" onClick={resetEvidenceView}>{Math.round(evidenceZoom * 100)}%</button>
+            <button className="icon-button" aria-label="Zoom in" title="Zoom in (+)" disabled={evidenceZoom >= 5} onClick={() => changeEvidenceZoom(0.25)}><ZoomIn size={18} /></button>
+            <button className="icon-button" aria-label="Fit evidence to screen" title="Fit to screen" onClick={resetEvidenceView}><Maximize2 size={18} /></button>
+            <button className="icon-button" aria-label="Close evidence viewer" onClick={() => { setEvidenceFullscreen(null); resetEvidenceView(); }}><X size={18} /></button>
+          </div>
         </div>
-        <div className="evidence-full-stage">
-          <Image unoptimized width={1080} height={1920} className="evidence-full-image" src={evidenceFullscreen.previewUrl} alt={`Full size ${evidenceFullscreen.category} evidence`} />
+        <div
+          className={`evidence-full-stage ${evidenceZoom > 1 ? "is-zoomed" : ""}`}
+          onPointerDown={handleEvidencePointerDown}
+          onPointerMove={handleEvidencePointerMove}
+          onPointerUp={handleEvidencePointerEnd}
+          onPointerCancel={handleEvidencePointerEnd}
+          onWheel={handleEvidenceWheel}
+          onDoubleClick={resetEvidenceView}
+        >
+          <div className="evidence-fit-layer" style={{ transform: `translate3d(${evidencePan.x}px, ${evidencePan.y}px, 0) scale(${evidenceZoom})` }}>
+            <Image fill unoptimized sizes="100vw" className="evidence-full-image" src={evidenceFullscreen.previewUrl} alt={`Full size ${evidenceFullscreen.category} evidence`} priority />
+          </div>
         </div>
-        <div className="evidence-lightbox-foot">Full-resolution protected evidence Â· click outside or close to return</div>
+        <div className="evidence-lightbox-foot"><span>Fit-to-screen protected evidence Â· wheel/buttons/+/âˆ’ to zoom Â· drag or pinch to pan/zoom Â· double-click or 0 to reset</span></div>
       </section>
     </div>}
 
